@@ -43,16 +43,52 @@ A premium, glassmorphism-inspired UI featuring:
 ## 🏗️ Technical Architecture
 
 ```mermaid
-graph TD
-    A[Video Source / CCTV] --> B[FastAPI Backend]
-    B --> C[YOLOv8 Detection Engine]
-    B --> D[YOLOv8 Segmentation Engine]
-    C & D --> E[Agentic Incident Manager]
-    E -->|Risk > 50| F[Autonomous Response]
-    F --> G[SMS / Call / Sprinkler]
-    B --> H[FAISS Vector DB]
-    H --> I[RAG Chat Assistant]
-    B --> J[React HUD Dashboard]
+graph TB
+    %% Detection Layer
+    subgraph Detection ["🛡️ 1. DETECTION LAYER (YOLOv8)"]
+        direction TB
+        input[Video / CCTV Stream] --> yolo[best.pt Detection Engine]
+        yolo --> boxes[Bounding Boxes]
+        yolo --> masks[Segmentation Masks]
+    end
+
+    %% Agentic Layer
+    subgraph Agentic ["🤖 2. AGENTIC LAYER (fire_agent.py)"]
+        direction TB
+        engine[Incident Decision Engine]
+        llm[Groq LLM: Llama 3.3 70B]
+        suppress[Autonomous Suppression Trigger]
+        engine --- llm
+    end
+
+    %% RAG Layer
+    subgraph RAG ["📚 3. RAG LAYER (real_rag_system.py)"]
+        direction TB
+        embed[SentenceTransformers]
+        faiss[FAISS Vector DB]
+        kb[Knowledge Base: NFPA 101, 13, 72 & OSHA]
+        kb --> embed --> faiss
+    end
+
+    %% Backend Layer
+    subgraph Backend ["⚙️ 4. BACKEND LAYER (FastAPI + SQLite)"]
+        direction TB
+        api[REST API Endpoints]
+        db[(SQLite Database)]
+        api --- db
+    end
+
+    %% Inter-layer connections
+    Detection -->|zone_id, coords, area| Agentic
+    Agentic <-->|Safety Context| RAG
+    Agentic -->|Incident Logs| Backend
+    Backend <-->|Real-time Telemetry| HUD[React HUD Dashboard]
+
+    %% Styling
+    style Detection fill:#0a1a2a,stroke:#22d3ee,stroke-width:2px,color:#fff
+    style Agentic fill:#0a1a2a,stroke:#818cf8,stroke-width:2px,color:#fff
+    style RAG fill:#0a1a2a,stroke:#facc15,stroke-width:2px,color:#fff
+    style Backend fill:#0a1a2a,stroke:#ec4899,stroke-width:2px,color:#fff
 ```
 
 ---
