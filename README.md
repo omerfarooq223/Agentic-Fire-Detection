@@ -107,11 +107,11 @@ graph TB
 
 This system utilizes high-performance deep learning models optimized for real-time safety monitoring.
 
-- **Architecture**: Leveraged **YOLOv8l** (Large) architecture, utilizing **Transfer Learning** to specialize pre-trained models for fire-safety applications.
+- **Architecture**: Trained on **YOLOv8l** (Large) for maximum feature extraction.
 - **Dataset**: Trained on the **FASDD (Fire and Smoke Detection Dataset)** featuring over **95,000 images**.
-- **Detection Performance**: Achieved **80% mAP** after **17 epochs** of fine-tuning.
-- **Segmentation Performance**: High-fidelity segmentation masks reached **92% accuracy** using YOLOv8-seg.
-- **Hardware**: Training optimized on **Kaggle GPU** environments.
+- **Detection Accuracy**: Achieved **80% mAP** after just **17 epochs** of fine-tuning.
+- **Segmentation Accuracy**: High-fidelity segmentation masks achieved **92% accuracy** using YOLOv8-seg.
+- **Hardware**: All training was performed on **Kaggle GPU** environments.
 
 ---
 
