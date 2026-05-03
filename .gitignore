@@ -42,6 +42,8 @@ __pycache__/
 *.mp4
 *.avi
 _archive/
+local_backup/
+New Folder With Items/
 
 # Output directories
 detection_images/*

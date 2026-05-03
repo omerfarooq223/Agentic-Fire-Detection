@@ -1,195 +1,140 @@
-# 🔥 Fire & Smoke Detection — Agentic RAG System
+# FireWatch AI: Autonomous Fire & Smoke Incident Management System
 
-A deep learning pipeline that detects fire and smoke with **YOLOv8 segmentation**, then triggers an **Agentic RAG** decision loop to recommend suppression actions, log incidents, and serve data through a REST API.
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-00A6ED?style=for-the-badge&logo=yolo)](https://ultralytics.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
----
+FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with an agentic incident response loop and a high-end Cyber HUD dashboard.
 
-## 🗂️ Project Structure
-
-```
-Fire and Smoke Detection/
-│
-├── best.pt                        # Trained YOLOv8 model (detection + segmentation)
-│
-├── real_rag_system.py             # ✅ TRUE RAG — FAISS + vector embeddings (SentenceTransformers)
-├── fire_agent.py                  # Agentic loop — Groq LLM + tool use
-├── fire_backend.py                # FastAPI backend — incidents, zones, SQLite DB
-│
-├── test_agent.py                  # End-to-end integration test
-├── test_backend.py                # Backend unit test
-│
-├── fire_system.db                 # SQLite database (auto-created)
-├── rag_documents/
-│   └── documents.json             # Generated fire safety knowledge base
-├── detection_images/              # Output images from detection events
-│
-├── final_fire_labels.zip          # Training dataset labels
-├── fire_seg_final_results.zip     # YOLOv8 segmentation results
-│
-├── Fire.mp4                       # Demo video 1
-├── Fire2.mp4                      # Demo video 2
-│
-├── .env                           # ⚠️  API keys — DO NOT commit to Git
-├── .gitignore
-│
-└── _archive/                      # Old files kept for reference
-    ├── last.pt                    # Last epoch weights (best.pt is preferred)
-    ├── fire_rag_system.py         # Old keyword-only RAG (replaced by real_rag_system.py)
-    ├── Fire.avi / Fire2.avi       # Duplicate videos (.mp4 versions kept)
-    ├── test_fre.avi               # Raw test footage
-    ├── README_v1_backend_setup.md
-    ├── README_v2_agentic_rag.md
-    └── README_v3_learning_guide.md
-```
+![System Demo](./demo.gif)
 
 ---
 
-## 🏗️ Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DETECTION LAYER                          │
-│   best.pt (YOLOv8)                                          │
-│   Input: Video / Image frame                                │
-│   Output: Bounding boxes + segmentation masks               │
-└────────────────────────┬────────────────────────────────────┘
-                         │ zone_id, coordinates, segment_area
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    AGENTIC LAYER  (fire_agent.py)           │
-│                                                             │
-│   1. query_zone_procedure(zone_id)                          │
-│   2. get_suppression_info(zone_id)                          │
-│   3. query_rag(query)  ──►  real_rag_system.py             │
-│   4. activate_suppression(zone_id, type, reason)            │
-│   5. log_incident(...)                                      │
-│                                                             │
-│   LLM: Groq (Llama 3.1 70B) — loaded from .env             │
-└────────────────────────┬────────────────────────────────────┘
-                         │ incidents, decisions
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    RAG LAYER  (real_rag_system.py)          │
-│                                                             │
-│   SentenceTransformers → 384-dim embeddings                 │
-│   FAISS IndexFlatL2 → semantic nearest-neighbor search      │
-│   Documents: NFPA 101, NFPA 13, NFPA 72, OSHA, Zone procs  │
-└────────────────────────┬────────────────────────────────────┘
-                         │ REST API
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    BACKEND LAYER  (fire_backend.py)         │
-│                                                             │
-│   FastAPI + SQLite                                          │
-│   /api/detections  /api/incidents  /api/zones               │
-│   /api/dashboard/summary                                    │
-│   Served on: http://localhost:8000                          │
-└─────────────────────────────────────────────────────────────┘
+## 🚀 System Capabilities
+
+### 1. Autonomous Incident Response (Zero-Latency)
+The system is equipped with an **Agentic Decision Engine** that monitors risk levels in real-time. When detection confidence or area thresholds are breached (>50% Risk Score), the system automatically:
+- **Dispatches Email Alerts**: Notifies facility managers with detection metadata.
+- **Initiates Emergency Calls**: Escalates to 911 services (Simulated logic).
+- **Activates Suppression Systems**: Triggers zone-specific sprinklers (Water, CO2, or Foam) based on the environment (e.g., Server Room vs. Warehouse).
+
+### 2. Cyber HUD Visual Overlay
+A sophisticated, canvas-based particle engine that transforms raw video feeds into actionable intelligence:
+- **Heat-Mapped Detections**: Dynamic color scaling (Blue → Yellow → Red) based on thermal intensity.
+- **Particle Physics**: Real-time glowing embers and fire-spark effects for high-impact visualization.
+- **Tactical Data Labels**: Floating HUD elements showing class name, confidence scores, and pixel-area measurements.
+- **Scanline Effects**: Animated "Cyber HUD" scanlines and corner brackets for a military-grade monitoring feel.
+
+### 3. Agentic RAG Assistant
+Integrated **Retrieval-Augmented Generation (RAG)** system built on LangChain and FAISS. 
+- Constrained knowledge base focused on fire safety protocols, evacuation procedures, and OSHA standards.
+- Context-aware responses that prioritize safety over generic AI behavior.
+
+### 4. Operations Dashboard
+A premium, glassmorphism-inspired UI featuring:
+- **Live Status Monitors**: Real-time health checks for backend and sensor feeds.
+- **Detection Timeline**: Historic trend analysis using Recharts.
+- **Compact Video Controls**: Streamlined workflow for uploading, detecting, and exporting results.
+
+---
+
+## 🏗️ Technical Architecture
+
+```mermaid
+graph TD
+    A[Video Source / CCTV] --> B[FastAPI Backend]
+    B --> C[YOLOv8 Detection Engine]
+    B --> D[YOLOv8 Segmentation Engine]
+    C & D --> E[Agentic Incident Manager]
+    E -->|Risk > 50| F[Autonomous Response]
+    F --> G[SMS / Call / Sprinkler]
+    B --> H[FAISS Vector DB]
+    H --> I[RAG Chat Assistant]
+    B --> J[React HUD Dashboard]
 ```
 
 ---
 
-## ⚙️ Setup
+## 🛠️ Tech Stack
 
-### 1. Create virtual environment
+- **Computer Vision**: Ultralytics YOLOv8 (Segmentation & Detection), OpenCV
+- **Backend**: FastAPI, SQLAlchemy (SQLite), Pydantic
+- **AI/LLM**: SentenceTransformers (Embeddings), FAISS (Vector Store), GPT-based Knowledge Retrieval
+- **Frontend**: React 18, Vite, Lucide-React, Recharts
+- **Styling**: Custom CSS3 (Glassmorphism, Particle Engine, Keyframe Animations)
+
+---
+
+## 📂 Project Structure
+
+```text
+.
+├── fire_backend.py        # Core FastAPI Server & CV Logic
+├── fire_agent.py          # Autonomous Decision Logic & Incident Handling
+├── real_rag_system.py     # Vector Database & Retrieval Engine
+├── models/                # YOLO Weights & Segmentation Modules
+├── tests/                 # System Validation Scripts
+├── frontend/              # React Application
+│   ├── src/
+│   │   ├── App.jsx           # Dashboard Hub
+│   │   ├── overlay-enhanced.js # Cyber HUD Particle Engine
+│   │   └── index.css         # HUD Design System
+│   └── package.json
+└── .env.example           # Environment Template
+```
+
+---
+
+## ⚡ Quick Start
+
+### 1) Backend Environment
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-```
+# Create Virtual Environment
+python3 -m venv .venv
+source .venv/bin/activate
 
-### 2. Install dependencies
-```bash
-pip install fastapi uvicorn sqlalchemy pillow requests python-dotenv
-pip install sentence-transformers faiss-cpu   # for real vector RAG
-pip install ultralytics                        # for YOLOv8 (best.pt)
-```
+# Install Dependencies
+pip install -r requirements.txt
 
-### 3. Configure API key
-Edit `.env` and paste your Groq key (free at https://console.groq.com):
-```
-GROQ_API_KEY=gsk_your_key_here
-```
-
----
-
-## 🚀 Running the System
-
-### Step 1 — Start the backend
-```bash
+# Start the CV/FastAPI engine
 python fire_backend.py
-# API docs: http://localhost:8000/docs
 ```
+*Base URL: `http://localhost:8000` | Docs: `/docs`*
 
-### Step 2 — Run integration test (new terminal)
+### 2) Frontend Environment
 ```bash
-python test_agent.py
+# Navigate and launch dashboard
+cd frontend
+npm install
+npm run dev
+```
+### 3. Environment Configuration
+Create a `.env` file in the root directory based on `.env.example`:
+```env
+FIRE_DETECT_MODEL=./best.pt
+BACKEND_URL=http://localhost:8000
+GROQ_API_KEY=your_groq_api_key
 ```
 
-### Step 3 — Run backend test
-```bash
-python test_backend.py
-```
+### 4. Model Weights (best.pt)
+The core detection model (`best.pt`) is ~260MB and is excluded from the standard git repository. 
+- **Download**: [Insert your download link here]
+- **Placement**: Ensure `best.pt` is placed in the project root before starting the backend.
 
 ---
 
-## 🔑 Key API Endpoints
+## 📋 Operational Procedures
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/init/zones` | Create the 3 zones |
-| POST | `/api/init/procedures` | Load safety procedures |
-| POST | `/api/detections` | Log a fire detection |
-| GET | `/api/detections` | Get all detections |
-| POST | `/api/incidents` | Log agent decision |
-| GET | `/api/incidents` | Get all incidents |
-| PATCH | `/api/incidents/{id}/status` | Update incident status |
-| GET | `/api/dashboard/summary` | High-level metrics |
+1. **Dashboard Initialization**: Ensure the top-right status chip shows **ONLINE**.
+2. **Video Analysis**: Upload any MP4/AVI file. The system will auto-hide the upload panel to maximize the Cyber HUD viewport.
+3. **Emergency Override**: Manual trigger buttons are available in the "Incident Response" panel for human-in-the-loop control.
+4. **Export**: Processed videos with the Cyber HUD burned-in can be exported via the "Export" button in the compact controller.
 
 ---
 
-## 🤖 RAG System
+## 👤 Credits
 
-The project uses **true Retrieval-Augmented Generation** (not keyword matching):
-
-| | Old (`fire_rag_system.py`) | New (`real_rag_system.py`) |
-|--|--|--|
-| Retrieval | Keyword matching | Vector similarity (FAISS) |
-| Understanding | Exact words only | Semantic meaning |
-| Example | "CO2" ≠ "carbon dioxide" | "CO2" ≈ "carbon dioxide" ✅ |
-| Speed | Fast | ~1ms per query |
-
-**Documents indexed:** NFPA 101 (Evacuation), NFPA 13 (Sprinklers), NFPA 72 (Detection), OSHA Emergency Procedures, Zone-specific protocols (Lobby, Server Room, Warehouse), Fire extinguisher classification.
-
----
-
-## 🔬 Model Info
-
-| Property | Value |
-|----------|-------|
-| Model | YOLOv8 (custom trained) |
-| Task | Object detection + instance segmentation |
-| Classes | Fire, Smoke |
-| Weights | `best.pt` (best validation epoch) |
-| Training labels | `final_fire_labels.zip` |
-| Segmentation output | `fire_seg_final_results.zip` |
-
-> `last.pt` (last epoch weights) is archived in `_archive/`. Always use `best.pt` for inference.
-
----
-
-## ⚠️ Security Notes
-
-- The Groq API key is loaded from `.env` — **never commit `.env` to Git**
-- `.gitignore` already excludes `.env`, `*.pt`, `*.db`, and `__pycache__`
-
----
-
-## 📋 Troubleshooting
-
-| Error | Fix |
-|-------|-----|
-| `Address already in use` | `lsof -ti :8000 \| xargs kill -9` |
-| `Database locked` | Delete `fire_system.db` and restart |
-| `No module named sentence_transformers` | `pip install sentence-transformers faiss-cpu` |
-| `GROQ_API_KEY not set` | Edit `.env`, add your key from console.groq.com |
-| `Similarity scores low` | Adjust chunk size in `real_rag_system.py` |
+Designed and Developed with precision by **Muhammad Umar Farooq**.  
+*Building the future of autonomous safety systems.*

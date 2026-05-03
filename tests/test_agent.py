@@ -282,8 +282,3 @@ summary_box = f"""
 """
 
 print(summary_box)
-
-print("=" * 80)
-print("📊 Ready for next phase: Frontend Dashboard + Groq Integration")
-print("=" * 80)
-

@@ -18,19 +18,110 @@ from pydantic import BaseModel
 from datetime import datetime
 import os
 import shutil
+import zipfile
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import io
 import json
+import tempfile
+from typing import Any, Optional
+
+import cv2
+import numpy as np
+from ultralytics import YOLO
+from real_rag_system import RealRAGSystem
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SEG_RESULTS_ZIP = PROJECT_ROOT / "fire_seg_final_results.zip"
+SEG_WEIGHTS_PT = PROJECT_ROOT / "models" / "fire_seg" / "weights" / "best.pt"
+DEFAULT_DETECT_PT = PROJECT_ROOT / "best.pt"
+
+_yolo_det: Any = None
+_yolo_seg: Any = None
+_yolo_det_checked = False
+_rag_system: Optional[Any] = None
+
+def generate_rag_answer(query: str, retrieved_docs: list, groq_key: str = None) -> str:
+    """
+    Use Groq LLM to synthesize an answer from retrieved documents
+    This is the "GENERATE" part of RAG (Retrieval-Augmented Generation)
+    """
+    if not groq_key:
+        groq_key = GROQ_API_KEY
+    
+    if not groq_key:
+        # Fallback if no API key
+        return "I found relevant fire-safety information but cannot synthesize answer (API key missing)."
+    
+    # Build document context
+    doc_context = "\n\n".join([
+        f"Document {i+1} ({d.get('title', 'Unknown')}, relevance: {d.get('similarity_score', 0):.1%}):\n{d.get('content', '')[:800]}"
+        for i, d in enumerate(retrieved_docs[:3])
+    ])
+    
+    # System prompt for answer synthesis
+    system_msg = """You are a fire safety expert. Based on the retrieved documents provided, 
+answer the user's fire safety question concisely and accurately. 
+Focus on practical, actionable information. 
+Be brief but comprehensive (2-3 paragraphs max).
+If information is not in the documents, say so clearly."""
+    
+    user_msg = f"""Based on these fire-safety documents, answer: {query}
+
+Documents:
+{doc_context}
+
+Provide a clear, practical answer."""
+    
+    try:
+        response = requests.post(
+            GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg}
+                ],
+                "temperature": 0.5,
+                "max_tokens": 800
+            },
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("choices") and len(result["choices"]) > 0:
+                return result["choices"][0]["message"]["content"].strip()
+        
+        error_detail = response.text
+        try:
+            error_detail = response.json().get("error", {}).get("message", response.text)
+        except:
+            pass
+            
+        return f"Error generating answer (HTTP {response.status_code}): {error_detail}"
+    except Exception as e:
+        return f"Could not synthesize answer: {str(e)}"
+
 
 # ============= DATABASE SETUP =============
-DATABASE_URL = "sqlite:////Users/muhammadomerfarooq/Desktop/Fire and Smoke Detection/fire_system.db"
+DATABASE_URL = f"sqlite:///{PROJECT_ROOT / 'fire_system.db'}"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # Create directories
-IMAGES_DIR = Path("/Users/muhammadomerfarooq/Desktop/Fire and Smoke Detection/detection_images")
+IMAGES_DIR = PROJECT_ROOT / "detection_images"
 IMAGES_DIR.mkdir(exist_ok=True)
 
 # ============= DATABASE MODELS =============
@@ -151,6 +242,11 @@ class ZoneCreate(BaseModel):
     description: str
 
 
+class RAGQueryRequest(BaseModel):
+    query: str
+    top_k: int = 3
+
+
 # ============= FASTAPI APP =============
 app = FastAPI(title="Fire Management System", version="1.0")
 
@@ -235,6 +331,291 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def detect_fire_bbox_bgr(frame_bgr: np.ndarray):
+    """
+    Heuristic fire/smoke-colored region in BGR frame.
+    Returns (center_x, center_y, bbox_w, bbox_h) in pixels, or None.
+    """
+    if frame_bgr is None or frame_bgr.size == 0:
+        return None
+    h, w = frame_bgr.shape[:2]
+    blurred = cv2.GaussianBlur(frame_bgr, (21, 21), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    mask1 = cv2.inRange(hsv, (0, 55, 55), (35, 255, 255))
+    mask2 = cv2.inRange(hsv, (160, 55, 55), (180, 255, 255))
+    mask = cv2.bitwise_or(mask1, mask2)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    best = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(best)
+    min_area = max(500, (w * h) * 0.0015)
+    if area < min_area:
+        return None
+    x, y, bw, bh = cv2.boundingRect(best)
+    cx = x + bw / 2.0
+    cy = y + bh / 2.0
+    return cx, cy, float(bw), float(bh)
+
+
+def ensure_segmentation_weights() -> Path:
+    """Extract weights/best.pt from fire_seg_final_results.zip if needed."""
+    if SEG_WEIGHTS_PT.is_file():
+        return SEG_WEIGHTS_PT
+    if not SEG_RESULTS_ZIP.is_file():
+        raise FileNotFoundError(
+            f"Segmentation model not found. Place {SEG_RESULTS_ZIP.name} in {PROJECT_ROOT} "
+            f"or extract weights to {SEG_WEIGHTS_PT}"
+        )
+    SEG_WEIGHTS_PT.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(SEG_RESULTS_ZIP, "r") as zf:
+        member = "weights/best.pt"
+        if member not in zf.namelist():
+            raise FileNotFoundError(f"{SEG_RESULTS_ZIP.name} is missing {member}")
+        zf.extract(member, SEG_WEIGHTS_PT.parent.parent)
+    return SEG_WEIGHTS_PT
+
+
+def get_yolo_seg():
+    global _yolo_seg
+    if _yolo_seg is None:
+        wpath = ensure_segmentation_weights()
+        _yolo_seg = YOLO(str(wpath))
+    return _yolo_seg
+
+
+def get_yolo_det() -> Optional[Any]:
+    """Optional detector from FIRE_DETECT_MODEL env or ./best.pt (not the seg weights file)."""
+    global _yolo_det, _yolo_det_checked
+    if _yolo_det_checked:
+        return _yolo_det
+    _yolo_det_checked = True
+    env = os.environ.get("FIRE_DETECT_MODEL")
+    path = Path(env).expanduser() if env else DEFAULT_DETECT_PT
+    if not path.is_file():
+        _yolo_det = None
+        return None
+    try:
+        rpath = path.resolve()
+        if rpath == SEG_WEIGHTS_PT.resolve():
+            _yolo_det = None
+            return None
+    except OSError:
+        pass
+    _yolo_det = YOLO(str(path))
+    return _yolo_det
+
+
+def get_rag_system() -> Any:
+    global _rag_system
+    if _rag_system is None:
+        _rag_system = RealRAGSystem()
+    return _rag_system
+
+
+def _boxes_from_result(result, im_w: int, im_h: int) -> list:
+    out = []
+    if result.boxes is None or len(result.boxes) == 0:
+        return out
+    for i in range(len(result.boxes)):
+        xyxy = result.boxes.xyxy[i].cpu().numpy()
+        x1, y1, x2, y2 = map(float, xyxy)
+        cx = ((x1 + x2) / 2) / im_w
+        cy = ((y1 + y2) / 2) / im_h
+        bw = (x2 - x1) / im_w
+        bh = (y2 - y1) / im_h
+        cls_id = int(result.boxes.cls[i]) if result.boxes.cls is not None else 0
+        conf = float(result.boxes.conf[i]) if result.boxes.conf is not None else 0.0
+        name = result.names.get(cls_id, str(cls_id)) if getattr(result, "names", None) else str(cls_id)
+        out.append(
+            {
+                "bbox": {"x": cx, "y": cy, "w": bw, "h": bh},
+                "class_id": cls_id,
+                "confidence": round(conf, 4),
+                "class_name": name,
+            }
+        )
+    return out
+
+
+def _masks_from_result(result, im_w: int, im_h: int) -> tuple[list, float]:
+    polys: list = []
+    area_px = 0.0
+    if result.masks is None or result.masks.xy is None:
+        return polys, area_px
+    for xy in result.masks.xy:
+        if xy is None or len(xy) < 3:
+            continue
+        poly = [{"x": float(px) / im_w, "y": float(py) / im_h} for px, py in xy]
+        polys.append(poly)
+        arr = np.array(xy, dtype=np.float32)
+        area_px += float(cv2.contourArea(arr))
+    return polys, area_px
+
+
+def _largest_bbox(entries: list) -> Optional[dict]:
+    if not entries:
+        return None
+    best = max(entries, key=lambda e: e["bbox"]["w"] * e["bbox"]["h"])
+    return best["bbox"]
+
+
+def _bbox_from_polygon(poly: list) -> dict:
+    xs = [p["x"] for p in poly]
+    ys = [p["y"] for p in poly]
+    w = max(xs) - min(xs)
+    h = max(ys) - min(ys)
+    cx = (min(xs) + max(xs)) / 2
+    cy = (min(ys) + max(ys)) / 2
+    return {"x": cx, "y": cy, "w": w, "h": h}
+
+
+def infer_frame_yolo(frame_bgr: np.ndarray, conf: float = 0.25) -> dict:
+    """
+    Run optional best.pt detector + segmentation model from zip.
+    Returns normalized bbox (center), mask polygons, pixel area, fire flag.
+    """
+    if frame_bgr is None or frame_bgr.size == 0:
+        return {
+            "fire": False,
+            "smoke": False,
+            "bbox": None,
+            "fire_masks": [],
+            "fire_segment_area_pixels": 0.0,
+            "fire_boxes": [],
+            "smoke_boxes": [],
+            "raw_detections": [],
+            "raw_segmentation_detections": [],
+        }
+
+    im_h, im_w = frame_bgr.shape[:2]
+    det_model = get_yolo_det()
+    seg_model = get_yolo_seg()
+
+    det_entries: list = []
+    if det_model is not None:
+        dr = det_model(frame_bgr, conf=conf, verbose=False)[0]
+        det_entries = _boxes_from_result(dr, im_w, im_h)
+
+    sr = seg_model(frame_bgr, conf=conf, verbose=False)[0]
+    seg_entries = _boxes_from_result(sr, im_w, im_h)
+    fire_masks, fire_area_px = _masks_from_result(sr, im_w, im_h)
+
+    fire_boxes = [d for d in det_entries if str(d.get("class_name", "")).lower() == "fire"]
+    smoke_boxes = [d for d in det_entries if str(d.get("class_name", "")).lower() == "smoke"]
+
+    fire = bool(fire_boxes) or bool(seg_entries) or bool(fire_masks)
+    smoke = bool(smoke_boxes)
+    bbox = _largest_bbox(seg_entries) or _largest_bbox(fire_boxes) or _largest_bbox(smoke_boxes)
+    if bbox is None and fire_masks:
+        def _poly_area_px(m):
+            arr = np.array([[p["x"] * im_w, p["y"] * im_h] for p in m], dtype=np.float32)
+            return cv2.contourArea(arr)
+
+        bbox = _bbox_from_polygon(max(fire_masks, key=_poly_area_px))
+
+    return {
+        "fire": fire,
+        "smoke": smoke,
+        "bbox": bbox,
+        "fire_masks": fire_masks,
+        "fire_segment_area_pixels": round(fire_area_px, 1),
+        "fire_boxes": fire_boxes,
+        "smoke_boxes": smoke_boxes,
+        "raw_detections": det_entries,
+        "raw_segmentation_detections": seg_entries,
+    }
+
+
+def _dashed_rect(img: np.ndarray, x1: int, y1: int, x2: int, y2: int, color: tuple, thickness: int = 2) -> None:
+    dash, gap = 14, 10
+
+    for x in range(x1, x2, dash + gap):
+        xe = min(x + dash, x2)
+        cv2.line(img, (xe, y1), (x, y1), color, thickness)
+    for x in range(x1, x2, dash + gap):
+        xe = min(x + dash, x2)
+        cv2.line(img, (xe, y2), (x, y2), color, thickness)
+    for y in range(y1, y2, dash + gap):
+        ye = min(y + dash, y2)
+        cv2.line(img, (x2, ye), (x2, y), color, thickness)
+    for y in range(y1, y2, dash + gap):
+        ye = min(y + dash, y2)
+        cv2.line(img, (x1, ye), (x1, y), color, thickness)
+
+
+def annotate_frame_bgr(frame_bgr: np.ndarray, y: dict, conf: float) -> np.ndarray:
+    """Draw fire masks (cyan) and smoke boxes (indigo dashed) — matches frontend styling."""
+    out = frame_bgr.copy()
+    h, w = out.shape[:2]
+    cyan = (238, 211, 34)  # BGR ≈ #22d3ee
+    smoke_col = (248, 140, 129)  # BGR ≈ #818cf8
+
+    for d in y.get("smoke_boxes") or []:
+        b = d.get("bbox")
+        if not b:
+            continue
+        cx, cy, bw, bh = b["x"], b["y"], b["w"], b["h"]
+        x1 = int((cx - bw / 2) * w)
+        y1 = int((cy - bh / 2) * h)
+        x2 = int((cx + bw / 2) * w)
+        y2 = int((cy + bh / 2) * h)
+        x1, x2 = sorted([max(0, min(x1, w - 1)), max(0, min(x2, w - 1))])
+        y1, y2 = sorted([max(0, min(y1, h - 1)), max(0, min(y2, h - 1))])
+        overlay = out.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), smoke_col, -1)
+        out = cv2.addWeighted(overlay, 0.12, out, 0.88, 0)
+        _dashed_rect(out, x1, y1, x2, y2, smoke_col, 2)
+
+    fire_masks = y.get("fire_masks") or []
+    if fire_masks:
+        blend = out.copy()
+        for poly in fire_masks:
+            if not poly or len(poly) < 3:
+                continue
+            pts = np.array([[int(p["x"] * w), int(p["y"] * h)] for p in poly], dtype=np.int32)
+            cv2.fillPoly(blend, [pts], cyan)
+        out = cv2.addWeighted(blend, 0.2, out, 0.8, 0)
+        for poly in fire_masks:
+            if not poly or len(poly) < 3:
+                continue
+            pts = np.array([[int(p["x"] * w), int(p["y"] * h)] for p in poly], dtype=np.int32)
+            cv2.polylines(out, [pts], True, cyan, 2, cv2.LINE_AA)
+    else:
+        fb = y.get("fire_boxes") or []
+        box = None
+        if fb and fb[0].get("bbox"):
+            box = fb[0]["bbox"]
+        elif y.get("bbox") and (y.get("fire") or fire_masks):
+            box = y["bbox"]
+        if box and y.get("fire"):
+            cx, cy, bw, bh = box["x"], box["y"], box["w"], box["h"]
+            x1 = int((cx - bw / 2) * w)
+            y1 = int((cy - bh / 2) * h)
+            x2 = int((cx + bw / 2) * w)
+            y2 = int((cy + bh / 2) * h)
+            overlay = out.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), cyan, -1)
+            out = cv2.addWeighted(overlay, 0.12, out, 0.88, 0)
+            cv2.rectangle(out, (x1, y1), (x2, y2), cyan, 2, cv2.LINE_AA)
+
+    parts = []
+    if y.get("fire"):
+        parts.append("Fire" + (" seg" if fire_masks else ""))
+    if y.get("smoke"):
+        parts.append("Smoke")
+    text = " · ".join(parts) if parts else "No fire/smoke"
+    text = f"{text}   conf={conf:.2f}   fire_area_px={y.get('fire_segment_area_pixels', 0):.0f}"
+    tw = max(420, min(w - 20, 18 * len(text) // 2))
+    cv2.rectangle(out, (8, 8), (12 + tw, 52), (24, 24, 26), -1)
+    cv2.rectangle(out, (8, 8), (12 + tw, 52), (60, 60, 70), 1)
+    cv2.putText(out, text, (18, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (220, 240, 250), 2, cv2.LINE_AA)
+    return out
 
 
 # ============= INITIALIZATION ENDPOINTS =============
@@ -490,6 +871,389 @@ def get_incidents_by_zone(db: Session = Depends(get_db)):
         })
     
     return result
+
+
+# ============= VIDEO ANALYSIS (sampled frames) =============
+@app.post("/api/analyze/video")
+async def analyze_uploaded_video(
+    file: UploadFile = File(...),
+    sample_interval_sec: float = 0.35,
+    conf: float = 0.25,
+):
+    """
+    Sample frames from an uploaded video. Uses ./best.pt (or FIRE_DETECT_MODEL) plus
+    weights from fire_seg_final_results.zip (YOLO segmentation) for masks and boxes.
+    Bounding boxes are normalized (0–1); x,y are center. masks are lists of polygons in normalized coords.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format. Use mp4, webm, mov, avi, mkv, or m4v.",
+        )
+
+    sample_interval_sec = max(0.15, min(float(sample_interval_sec), 2.0))
+    conf = max(0.05, min(float(conf), 0.95))
+
+    try:
+        ensure_segmentation_weights()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Could not open video file")
+
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
+
+        if width <= 0 or height <= 0:
+            raise HTTPException(status_code=400, detail="Invalid video dimensions")
+
+        duration_sec = frame_count / fps if fps > 0 and frame_count > 0 else 0.0
+        max_analyze_sec = 180.0
+        max_samples = 240
+        step = max(1, int(fps * sample_interval_sec))
+
+        frames_out = []
+        idx = 0
+        positive_frames = 0
+
+        while idx < frame_count and len(frames_out) < max_samples:
+            if duration_sec > 0 and (idx / fps) > max_analyze_sec:
+                break
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            t = idx / fps if fps > 0 else 0.0
+            try:
+                y = infer_frame_yolo(frame, conf=conf)
+            except Exception as e:
+                cap.release()
+                raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
+
+            if y["fire"] or y.get("smoke"):
+                positive_frames += 1
+                bb = y["bbox"]
+                frame_payload = {
+                    "t": round(t, 3),
+                    "fire": bool(y["fire"]),
+                    "smoke": bool(y.get("smoke")),
+                    "bbox": (
+                        {
+                            "x": round(bb["x"], 5),
+                            "y": round(bb["y"], 5),
+                            "w": round(bb["w"], 5),
+                            "h": round(bb["h"], 5),
+                        }
+                        if bb
+                        else None
+                    ),
+                    "fire_masks": y.get("fire_masks") or [],
+                    "fire_segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
+                    "smoke_boxes": y.get("smoke_boxes") or [],
+                    "fire_boxes": y.get("fire_boxes") or [],
+                }
+                frames_out.append(frame_payload)
+            else:
+                frames_out.append(
+                    {
+                        "t": round(t, 3),
+                        "fire": False,
+                        "smoke": bool(y.get("smoke")),
+                        "bbox": None,
+                        "fire_masks": [],
+                        "fire_segment_area_pixels": 0.0,
+                        "smoke_boxes": y.get("smoke_boxes") or [],
+                        "fire_boxes": y.get("fire_boxes") or [],
+                    }
+                )
+
+            idx += step
+
+        cap.release()
+
+        det_path_str = os.environ.get("FIRE_DETECT_MODEL") or str(DEFAULT_DETECT_PT)
+        det_loaded = get_yolo_det() is not None
+        note_parts = [
+            "YOLO segmentation from fire_seg_final_results.zip (extracted to models/fire_seg/weights/best.pt).",
+        ]
+        if det_loaded:
+            note_parts.append(f"Detection head also loads: {det_path_str}.")
+        else:
+            note_parts.append(
+                "Optional detector not loaded — add best.pt next to fire_backend.py or set FIRE_DETECT_MODEL."
+            )
+
+        return {
+            "filename": file.filename,
+            "video_width": width,
+            "video_height": height,
+            "duration_sec": round(min(duration_sec, max_analyze_sec), 2),
+            "fps": round(fps, 2),
+            "samples": len(frames_out),
+            "positive_frames": positive_frames,
+            "fire_frames": positive_frames,
+            "conf": conf,
+            "note": " ".join(note_parts),
+            "frames": frames_out,
+        }
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+@app.post("/api/analyze/image")
+async def analyze_uploaded_image(
+    file: UploadFile = File(...),
+    conf: float = 0.25,
+):
+    """Run YOLO on a single image; returns JSON + URL to an annotated PNG in /images/."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image format. Use jpg, png, webp, or bmp.",
+        )
+
+    conf = max(0.05, min(float(conf), 0.95))
+
+    try:
+        ensure_segmentation_weights()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    raw = await file.read()
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Could not decode image")
+
+    im_h, im_w = frame.shape[:2]
+    try:
+        y = infer_frame_yolo(frame, conf=conf)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
+
+    annotated = annotate_frame_bgr(frame, y, conf)
+    out_name = f"annotated_img_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.png"
+    out_path = IMAGES_DIR / out_name
+    cv2.imwrite(str(out_path), annotated)
+
+    bb = y.get("bbox")
+    return {
+        "filename": file.filename,
+        "image_width": im_w,
+        "image_height": im_h,
+        "conf": conf,
+        "fire": y["fire"],
+        "smoke": y["smoke"],
+        "bbox": (
+            {
+                "x": round(bb["x"], 5),
+                "y": round(bb["y"], 5),
+                "w": round(bb["w"], 5),
+                "h": round(bb["h"], 5),
+            }
+            if bb
+            else None
+        ),
+        "fire_masks": y.get("fire_masks") or [],
+        "fire_segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
+        "smoke_boxes": y.get("smoke_boxes") or [],
+        "fire_boxes": y.get("fire_boxes") or [],
+        "annotated_image_url": f"/images/{out_name}",
+    }
+
+
+@app.post("/api/analyze/video/export")
+async def export_annotated_video(
+    file: UploadFile = File(...),
+    conf: float = 0.25,
+    infer_stride: int = 1,
+):
+    """
+    Render every frame (or every infer_stride-th frame for speed) with the same overlays as the UI.
+    Returns an MP4 file download.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format. Use mp4, webm, mov, avi, mkv, or m4v.",
+        )
+
+    conf = max(0.05, min(float(conf), 0.95))
+    infer_stride = max(1, min(int(infer_stride), 30))
+
+    try:
+        ensure_segmentation_weights()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    out_name = f"annotated_vid_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp4"
+    out_path = IMAGES_DIR / out_name
+
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Could not open video file")
+
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 0
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 0
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+
+        if width <= 0 or height <= 0:
+            raise HTTPException(status_code=400, detail="Invalid video dimensions")
+
+        max_export_sec = 600.0
+        max_out_frames = 8000
+        duration_sec = frame_count / fps if fps > 0 and frame_count > 0 else 0.0
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
+        if not writer.isOpened():
+            raise HTTPException(status_code=500, detail="Could not create output video writer")
+
+        last_y = {
+            "fire": False,
+            "smoke": False,
+            "bbox": None,
+            "fire_masks": [],
+            "fire_segment_area_pixels": 0.0,
+            "fire_boxes": [],
+            "smoke_boxes": [],
+        }
+
+        frame_idx = 0
+        written = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            t = frame_idx / fps if fps > 0 else 0.0
+            if duration_sec > max_export_sec and t > max_export_sec:
+                break
+            if frame_idx % infer_stride == 0:
+                try:
+                    last_y = infer_frame_yolo(frame, conf=conf)
+                except Exception as e:
+                    cap.release()
+                    writer.release()
+                    raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
+            annotated = annotate_frame_bgr(frame, last_y, conf)
+            writer.write(annotated)
+            written += 1
+            frame_idx += 1
+            if written >= max_out_frames:
+                break
+
+        cap.release()
+        writer.release()
+
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(file.filename).stem)[:80]
+        download_name = f"FireWatch_annotated_{safe}.mp4"
+
+        return FileResponse(
+            path=str(out_path),
+            media_type="video/mp4",
+            filename=download_name,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+@app.post("/api/rag/query")
+def rag_query(payload: RAGQueryRequest):
+    """Query the vector RAG system and return answer + sources."""
+    query = (payload.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is required")
+
+    top_k = max(1, min(int(payload.top_k), 8))
+
+    rag = get_rag_system()
+    if not getattr(rag, "embeddings_model", None) or not getattr(rag, "vector_index", None):
+        raise HTTPException(
+            status_code=503,
+            detail="RAG embeddings not initialized. Ensure sentence-transformers and faiss-cpu are installed.",
+        )
+
+    retrieved = rag.retrieve(query, top_k=top_k)
+    if not retrieved:
+        return {
+            "query": query,
+            "answer": "No relevant documents found in the fire-safety knowledge base.",
+            "sources": [],
+        }
+
+    top_score = float(retrieved[0].get("similarity_score", 0.0))
+    safety_keywords = {
+        "fire", "smoke", "suppression", "sprinkler", "co2", "foam", "evacuation",
+        "hazard", "alarm", "zone", "extinguisher", "incident", "safety", "nfpa",
+        "response", "server room", "warehouse", "lobby",
+    }
+    q_lower = query.lower()
+    has_safety_intent = any(k in q_lower for k in safety_keywords)
+    if (not has_safety_intent) or top_score < 0.42:
+        return {
+            "query": query,
+            "answer": (
+                "I only answer fire-safety questions grounded in this project's RAG documents. "
+                "Please ask about fire/smoke detection, suppression systems, evacuation, zones, or incident response."
+            ),
+            "sources": [],
+        }
+
+    # Generate synthesized answer using Groq LLM
+    print(f"DEBUG: Generating RAG answer for query: {query}")
+    answer = generate_rag_answer(query, retrieved)
+
+
+
+    return {
+        "query": query,
+        "answer": answer,
+        "sources": [
+            {
+                "doc_id": d.get("doc_id"),
+                "title": d.get("title"),
+                "chunk_id": d.get("chunk_id"),
+                "similarity_score": round(float(d.get("similarity_score", 0.0)), 4),
+                "excerpt": str(d.get("content", ""))[:320],
+            }
+            for d in retrieved
+        ],
+    }
 
 
 # ============= HEALTH CHECK =============
