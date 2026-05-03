@@ -103,6 +103,18 @@ graph TB
 
 ---
 
+## 🧠 Model Training & Performance
+
+This system utilizes high-performance deep learning models optimized for real-time safety monitoring.
+
+- **Architecture**: Leveraged **YOLOv8l** (Large) architecture, utilizing **Transfer Learning** to specialize pre-trained models for fire-safety applications.
+- **Dataset**: Trained on the **FASDD (Fire and Smoke Detection Dataset)** featuring over **95,000 images**.
+- **Detection Performance**: Achieved **80% mAP** after **17 epochs** of fine-tuning.
+- **Segmentation Performance**: High-fidelity segmentation masks reached **92% accuracy** using YOLOv8-seg.
+- **Hardware**: Training optimized on **Kaggle GPU** environments.
+
+---
+
 ## 📂 Project Structure
 
 ```text
@@ -154,11 +166,6 @@ BACKEND_URL=http://localhost:8000
 GROQ_API_KEY=your_groq_api_key
 ```
 
-### 4. Model Weights (best.pt)
-The core detection model (`best.pt`) is ~260MB and is excluded from the standard git repository. 
-- **Download**: [Insert your download link here]
-- **Placement**: Ensure `best.pt` is placed in the project root before starting the backend.
-
 ---
 
 ## 📋 Operational Procedures
@@ -172,5 +179,12 @@ The core detection model (`best.pt`) is ~260MB and is excluded from the standard
 
 ## 👤 Credits
 
-Designed and Developed with precision by **Muhammad Umar Farooq**.  
-*Building the future of autonomous safety systems.*
+<div align="center">
+  <p>Designed and Developed with precision by</p>
+  <h3><strong>Muhammad Umar Farooq</strong></h3>
+  <a href="https://omerfarooq223.github.io">
+    <img src="https://img.shields.io/badge/View_Portfolio-00A6ED?style=for-the-badge&logo=react&logoColor=white" alt="Portfolio" />
+  </a>
+  <br/><br/>
+  <i>"Building the future of autonomous safety systems."</i>
+</div>
