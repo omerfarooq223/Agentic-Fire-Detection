@@ -8,6 +8,7 @@ SQLite + FastAPI
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, LargeBinary, ForeignKey
@@ -152,6 +153,14 @@ class ZoneCreate(BaseModel):
 
 # ============= FASTAPI APP =============
 app = FastAPI(title="Fire Management System", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Serve detection images
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
