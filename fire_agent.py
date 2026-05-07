@@ -204,7 +204,7 @@ class FireManagementAgent:
 
     # ============= TOOL IMPLEMENTATIONS =============
     def query_zone_procedure(self, zone_id: int) -> str:
-        """Get procedure for zone"""
+        """Get procedure for zone, including physical address"""
         proc = self.rag.get_zone_procedure(zone_id)
         if proc:
             return self._json_serialize(proc)
@@ -239,8 +239,14 @@ class FireManagementAgent:
         })
     
     
-    def build_emergency_html(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str) -> str:
+    def build_emergency_html(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str, lat=None, lon=None) -> str:
         """Generate a premium Cyber HUD style HTML email"""
+        # Pin URL: Use Lat/Lon query format for high-visibility "Dropped Pin" + Directions button
+        if lat and lon:
+            map_url = f"https://www.google.com/maps?q={lat},{lon}"
+        else:
+            map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
+
         timestamp = datetime.now().strftime("%A, %B %d, %Y | %H:%M:%S")
         score_color = "#e11d48" if severity == "CRITICAL" else "#f59e0b"
         
@@ -272,7 +278,7 @@ class FireManagementAgent:
                   <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Location & Zone</div>
                   <div style="font-size:18px;font-weight:700;color:#f1f5f9;">{zone_name}</div>
                   <div style="font-size:14px;color:#94a3b8;margin-top:4px;margin-bottom:12px;">{address}</div>
-                  <a href="https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}" 
+                  <a href="{map_url}" 
                      style="display:inline-block;background:rgba(34, 211, 238, 0.1);color:#22d3ee;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:700;border:1px solid rgba(34, 211, 238, 0.3);">
                     📍 Open in Maps
                   </a>
@@ -324,13 +330,16 @@ class FireManagementAgent:
         </html>
         """
 
-    def send_emergency_email(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str = "") -> str:
+    def send_emergency_email(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str = "", lat=None, lon=None) -> str:
         """Send emergency email via official Gmail API using a premium HTML template"""
+        print(f"📧 Sending Emergency Alert Email for {zone_name}...")
+        print(f"📍 GPS Pinpoint Data: Lat={lat}, Lon={lon}")
+        
         if not os.path.exists('token.json'):
             return self._json_serialize({"error": "token.json not found."})
         
         subject = f"🚨 EMERGENCY FIRE ALERT: {zone_name} ({severity})"
-        html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning)
+        html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning, lat=lat, lon=lon)
         
         try:
             creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/gmail.send'])
@@ -402,7 +411,9 @@ class FireManagementAgent:
                 address=tool_input.get("address"),
                 severity=tool_input.get("severity"),
                 action_taken=tool_input.get("action_taken"),
-                reasoning=tool_input.get("reasoning", "")
+                reasoning=tool_input.get("reasoning", ""),
+                lat=tool_input.get("lat"),
+                lon=tool_input.get("lon")
             )
         elif tool_name == "initiate_emergency_call":
             return self.initiate_emergency_call(
@@ -438,14 +449,16 @@ class FireManagementAgent:
         print()
         
         # Build context for the agent
-        system_prompt = """You are a fire management AI agent. You receive fire detection alerts and must:
+        skip_email = detection_data.get("skip_email", False)
+        
+        system_prompt = f"""You are a fire management AI agent. You receive fire detection alerts and must:
 1. Query the safety procedures for the detected zone
 2. Get suppression system information
 3. Query the knowledge base for relevant fire safety info
 4. Decide on appropriate suppression system activation
 5. Log the incident with your reasoning
-6. Trigger 'send_emergency_email' with the structured detection data. (ONLY ONCE)
-7. Generate a concise, urgent call script and trigger 'initiate_emergency_call'. (ONLY ONCE)
+6. Trigger 'send_emergency_email' ONLY if skip_email is False. (Current skip_email status: {skip_email})
+7. Generate a concise, urgent call script and trigger 'initiate_emergency_call'.
 
 CRITICAL RULE:
 - You must send exactly ONE email and make exactly ONE call per detection. 
@@ -463,15 +476,18 @@ Log all decisions with clear reasoning."""
         
         user_message = f"""FIRE DETECTION ALERT:
 Zone: {zone_id}
+Physical Address: {detection_data.get('address', 'Unknown Location')}
+GPS Coordinates: {detection_data.get('lat', 'N/A')}, {detection_data.get('lon', 'N/A')}
 Detection Coordinates: X={coordinates.get('x', 0):.1f}, Y={coordinates.get('y', 0):.1f}
 Fire Segment Area: {segment_area:.0f} pixels
 
 REQUIRED ACTIONS:
-1. Query the zone's emergency procedure using query_zone_procedure
+1. Verify the zone's emergency procedure and address using query_zone_procedure
 2. Get suppression system info using get_suppression_info
 3. Query the knowledge base for relevant fire safety info
 4. Activate the appropriate suppression system
-5. Log the incident with your reasoning
+5. Log the incident with your reasoning (Use the Physical Address provided: {detection_data.get('address', 'Unknown')})
+6. Trigger 'send_emergency_email'. YOU MUST INCLUDE THE RAW 'lat' AND 'lon' PARAMETERS in the tool call if they are available in the detection data. This is critical for the rescue navigation link.
 
 Provide your analysis and decisions."""
         
@@ -480,10 +496,9 @@ Provide your analysis and decisions."""
             {"role": "user", "content": user_message}
         ]
         
-        # Agent loop
-        max_iterations = 5
-        iteration = 0
-        
+        # Build tools list - EXCLUDE email tool if skip_email is True
+        active_tools = [t for t in self.tools if not (skip_email and t["function"]["name"] == "send_emergency_email")]
+
         while iteration < max_iterations:
             iteration += 1
             print(f"\n🔄 Agent Iteration {iteration}:")
@@ -499,7 +514,7 @@ Provide your analysis and decisions."""
                     json={
                         "model": "llama-3.3-70b-versatile",
                         "messages": messages,
-                        "tools": self.tools,
+                        "tools": active_tools,
                         "tool_choice": "auto",
                         "temperature": 0.2,
                         "max_tokens": 1000
@@ -532,6 +547,16 @@ Provide your analysis and decisions."""
                     
                     print(f"   🔧 Tool: {tool_name}")
                     print(f"      Input: {tool_input}")
+                    
+                    # FAIL-SAFE INJECTION: Ensure GPS coordinates are passed to the email tool
+                    if tool_name == "send_emergency_email":
+                        raw_lat = detection_data.get("lat")
+                        raw_lon = detection_data.get("lon")
+                        if raw_lat and not tool_input.get("lat"):
+                            tool_input["lat"] = raw_lat
+                        if raw_lon and not tool_input.get("lon"):
+                            tool_input["lon"] = raw_lon
+                        print(f"      [System] Injected GPS coordinates into {tool_name}")
                     
                     # Execute tool
                     tool_result = self.process_tool_call(tool_name, tool_input)

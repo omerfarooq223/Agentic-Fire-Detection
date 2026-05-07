@@ -6,7 +6,7 @@
 [![Llama 3.3](https://img.shields.io/badge/LLM-Llama_3.3_70B-818cf8?style=for-the-badge&logo=meta)](https://groq.com/)
 [![Gmail API](https://img.shields.io/badge/Alerts-Gmail_API-e11d48?style=for-the-badge&logo=gmail)](https://developers.google.com/gmail/api)
 
-FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with a sophisticated **Agentic Emergency Coordinator** and a high-end Cyber HUD dashboard.
+FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with a sophisticated **Hybrid Emergency Coordinator** and a high-end Cyber HUD dashboard.
 
 ![System Demo](./demo.gif)
 
@@ -14,129 +14,79 @@ FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed 
 
 ## 🚀 System Capabilities
 
-### 1. Agentic Emergency Coordination (Autonomous)
-The system features a **Fire Management Agent** powered by Llama 3.3 (via Groq) that acts as an "AI Safety Officer." When a fire is detected:
-- **Reasoning Loop**: The AI analyzes detection area, coordinates, and zone safety protocols.
-- **Gmail API Integration**: Dispatches **Premium HTML Alerts** with SOC-style dashboard layouts.
-- **Dynamic Maps**: Automatically embeds Google Maps links for rapid responder navigation.
-- **Voice Escalation**: Generates urgent, natural-sounding scripts for emergency calls (Simulated).
-- **Suppression Control**: Autonomously decides and logs the activation of Water, CO2, or Foam systems.
+### 1. Hybrid Emergency Response (0-Latency)
+The system utilizes a dual-engine response architecture for maximum speed and intelligence:
+- **Direct Response (Speed):** A pure Python engine dispatches the first critical email alert the **millisecond** a fire is detected.
+- **Agentic Coordination (Intelligence):** A Llama 3.3-powered agent performs post-incident reasoning and RAG procedure lookups.
+- **Precision GPS Pinpointing:** Integrates browser-level Geolocation APIs to capture **exact GPS coordinates** for "One-Click Rescue" navigation.
 
 ### 2. Cyber HUD Visual Overlay
-A sophisticated, canvas-based particle engine that transforms raw video feeds into actionable intelligence:
-- **Heat-Mapped Detections**: Dynamic color scaling based on thermal intensity.
-- **Tactical Data Labels**: Floating HUD elements showing class, confidence, and pixel-area.
-- **Particle Physics**: Real-time glowing embers and spark effects for high-impact visualization.
+A sophisticated, canvas-based particle engine that transforms raw video feeds into actionable intelligence with heat-maps and real-time tactical overlays.
 
 ### 3. Agentic RAG Assistant
-Integrated **Retrieval-Augmented Generation (RAG)** system built on FAISS:
-- Constrained knowledge base focused on NFPA (101, 13) and OSHA safety standards.
-- Context-aware responses that prioritize lives and critical infrastructure.
-
-### 4. Operations Dashboard
-A premium, glassmorphism-inspired UI featuring:
-- **Live Status Monitors**: Real-time health checks for backend and sensors.
-- **Detection Timeline**: Historic trend analysis and incident logging.
+Integrated **Retrieval-Augmented Generation (RAG)** system built on FAISS for NFPA and OSHA safety standard consultation.
 
 ---
 
-## 🏗️ Technical Architecture
+## 📂 Project Structure
 
-```mermaid
-graph TB
-    %% Detection Layer
-    subgraph Detection ["🛡️ 1. DETECTION LAYER (YOLOv8)"]
-        direction TB
-        input[Video / CCTV Stream] --> yolo[best.pt Detection Engine]
-        yolo --> boxes[Bounding Boxes]
-        yolo --> masks[Segmentation Masks]
-    end
-
-    %% Agentic Layer
-    subgraph Agentic ["🤖 2. AGENTIC LAYER (Llama 3.3 70B)"]
-        direction TB
-        engine[Emergency Coordinator]
-        tools[Tools: Email, Call, Suppression]
-        engine --- tools
-    end
-
-    %% Communication Layer
-    subgraph Comm ["📧 3. COMMUNICATION LAYER"]
-        direction TB
-        gmail[Gmail API: OAuth2]
-        html[Premium HTML Templates]
-        maps[Google Maps Integration]
-        gmail --- html --- maps
-    end
-
-    %% Backend Layer
-    subgraph Backend ["⚙️ 4. BACKEND LAYER (FastAPI + SQLite)"]
-        direction TB
-        api[REST API Endpoints]
-        db[(Fire Incident DB)]
-        bg[Background Tasks]
-        api --- db
-    end
-
-    %% Inter-layer connections
-    Detection -->|Automatic Trigger| Backend
-    Backend -->|Background Thread| Agentic
-    Agentic -->|OAuth2 Token| Comm
-    Comm -->|Stakeholder Alert| User[End User]
-
-    %% Styling
-    style Detection fill:#0a1a2a,stroke:#22d3ee,stroke-width:2px,color:#fff
-    style Agentic fill:#0a1a2a,stroke:#818cf8,stroke-width:2px,color:#fff
-    style Comm fill:#0a1a2a,stroke:#e11d48,stroke-width:2px,color:#fff
-    style Backend fill:#0a1a2a,stroke:#ec4899,stroke-width:2px,color:#fff
+```text
+.
+├── fire_backend.py      # Core FastAPI Server & Frame Processing
+├── fire_agent.py        # AI Management Agent (Reasoning & Alerts)
+├── real_rag_system.py   # RAG Vector Search (NFPA Safety Docs)
+├── models/
+│   └── best.pt          # YOLOv8 Weights (Fire/Smoke)
+├── frontend/            # React + Vite Tactical Dashboard
+│   ├── src/
+│   │   ├── App.jsx      # Dashboard Logic & GPS Capture
+│   │   └── index.css    # Cyber HUD Styles
+├── fire_system.db       # Incident History & Zone Database
+├── credentials.json     # Google Cloud Auth (Required)
+└── .env                 # API Keys & Configuration
 ```
+
+---
+
+## 🏛️ System Architecture & Data Flow
+
+FireWatch AI is built on a modular, asynchronous architecture designed for high availability and low-latency response.
+
+### 1. Perception Layer (Computer Vision)
+- **Engine:** YOLOv8 (Segmentation Model)
+- **Task:** Real-time analysis of video frames to identify fire and smoke polygons.
+
+### 2. Hybrid Response Engine (Dual-Path)
+- **Fast-Path (Pure Python):** Triggered on the very first detection frame to ensure emails are sent in < 500ms.
+- **Analytical-Path (AI Agent):** Triggered in the background to initiate a multi-step reasoning loop and incident logging.
+
+### 3. Intelligence Layer (Agentic & RAG)
+- **AI Agent:** A ReAct-style agent that uses tools to interact with the system.
+- **RAG System:** A FAISS vector database containing specialized fire safety procedures.
+
+### 4. Communication Layer
+- **Gmail API:** Secure OAuth2-based email dispatching using premium HTML templates.
+- **Geolocation:** High-accuracy browser-based GPS capturing for pinpoint rescue.
 
 ---
 
 ## 🛠️ Setup & Configuration
 
 ### 1) Prerequisites
-- Python 3.10+
-- Node.js 18+
-- Google Cloud Console Project (with Gmail API enabled)
+- Python 3.10+, Node.js 18+
+- Google Cloud Console Project (Gmail API enabled)
 - Groq API Key
 
 ### 2) Environment Setup (`.env`)
-Create a `.env` in the root directory:
 ```env
-# AI & Core
 GROQ_API_KEY=your_key_here
 FIRE_DETECT_MODEL=./models/best.pt
-
-# Emergency Alerts
 REMINDER_EMAIL_SENDER=your_gmail@gmail.com
-REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com,stakeholder2@email.com
+REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com
 ```
 
 ### 3) Gmail API Authentication
-1. Download your `credentials.json` from the Google Cloud Console.
-2. Place it in the root directory.
-3. Run `python fire_agent.py` once to trigger the OAuth2 flow and generate `token.json`.
-
-### 4) Installation
-```bash
-# Backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python fire_backend.py
-
-# Frontend
-cd frontend && npm install && npm run dev
-```
-
----
-
-## 📂 Project Structure
-
-- `fire_backend.py`: Core FastAPI Server with background task orchestration.
-- `fire_agent.py`: Agentic reasoning loop, Gmail HTML builder, and tool definitions.
-- `real_rag_system.py`: Vector search engine for safety protocols.
-- `test_emergency.py`: End-to-end validation script for the alert pipeline.
+Place `credentials.json` in the root directory and run the system once to authorize and generate `token.json`.
 
 ---
 

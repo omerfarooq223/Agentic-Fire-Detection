@@ -477,6 +477,7 @@ function App() {
   const [online, setOnline] = useState(false)
   const [file, setFile] = useState(null)
   const [url, setUrl] = useState(null)
+  const [coords, setCoords] = useState({ lat: null, lon: null })
   const [analysis, setAnalysis] = useState(null)
   const [frame, setFrame] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -587,7 +588,7 @@ function App() {
     }
   }, [analysis])
 
-  // Health check
+  // Health check & Geolocation
   useEffect(() => {
     console.log('[App] Component mounted')
     const ping = async () => {
@@ -596,6 +597,19 @@ function App() {
     }
     ping()
     const timer = setInterval(ping, 3500)
+
+    // Request high-accuracy laptop location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude })
+          console.log('[Geo] ✅ Laptop location captured:', pos.coords.latitude, pos.coords.longitude)
+        },
+        (err) => console.warn('[Geo] ❌ Location permission denied or failed:', err.message),
+        { enableHighAccuracy: true }
+      )
+    }
+
     return () => clearInterval(timer)
   }, [])
 
@@ -762,7 +776,9 @@ function App() {
     try {
       const body = new FormData()
       body.append('file', file)
-      const res = await fetch(`${BACKEND_URL}/api/analyze/video?conf=0.25&sample_interval_sec=0.2`, {
+      // Pass the laptop's GPS coordinates to the backend
+      const geoParams = coords.lat ? `&lat=${coords.lat}&lon=${coords.lon}` : ''
+      const res = await fetch(`${BACKEND_URL}/api/analyze/video?conf=0.25&sample_interval_sec=0.2${geoParams}`, {
         method: 'POST',
         body,
       })

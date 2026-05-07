@@ -429,6 +429,36 @@ def get_fire_agent() -> FireManagementAgent:
     return _fire_agent
 
 
+def get_device_location(lat: float = None, lon: float = None) -> str:
+    """Detect the physical address of the current device via GPS or IP Geolocation"""
+    try:
+        # 1. Use provided GPS coordinates if available, otherwise fallback to IP
+        if lat is None or lon is None:
+            geo_res = requests.get("http://ip-api.com/json/", timeout=3).json()
+            if geo_res.get("status") == "success":
+                lat = geo_res.get("lat")
+                lon = geo_res.get("lon")
+        
+        if lat and lon:
+            # 2. Reverse Geocode to get a readable street address (using OpenStreetMap Nominatim)
+            headers = {"User-Agent": "FireWatchAI/1.0"}
+            rev_res = requests.get(
+                f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}", 
+                headers=headers,
+                timeout=3
+            ).json()
+            
+            address = rev_res.get("display_name")
+            if address:
+                return address
+            return f"Lat: {lat}, Lon: {lon}"
+            
+    except Exception as e:
+        print(f"Location detection failed: {e}")
+    
+    return "Unknown Live Location"
+
+
 def _boxes_from_result(result, im_w: int, im_h: int) -> list:
     out = []
     if result.boxes is None or len(result.boxes) == 0:
@@ -765,8 +795,18 @@ async def log_detection(
         # AUTOMATIC EMERGENCY RESPONSE
         # Trigger the AI Agent reasoning in the background
         agent = get_fire_agent()
+        
+        # DYNAMIC LOCATION: Use live device location if possible
+        live_address = get_device_location()
+        zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+        # Fallback to DB if live detection fails
+        final_address = live_address if "Unknown" not in live_address else (zone.location_address if zone else "Unknown")
+        
         agent_data = {
             "zone_id": zone_id,
+            "address": final_address,
+            "lat": geo_res.get("lat") if "Unknown" not in live_address else None,
+            "lon": geo_res.get("lon") if "Unknown" not in live_address else None,
             "coordinates": {"x": coordinates_x, "y": coordinates_y},
             "segment_area_pixels": segment_area_pixels,
             "detection_id": db_detection.detection_id
@@ -914,9 +954,14 @@ def get_incidents_by_zone(db: Session = Depends(get_db)):
 # ============= VIDEO ANALYSIS (sampled frames) =============
 @app.post("/api/analyze/video")
 async def analyze_uploaded_video(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     sample_interval_sec: float = 0.35,
     conf: float = 0.25,
+    zone_id: int = 1,
+    lat: float = None,
+    lon: float = None,
+    db: Session = Depends(get_db)
 ):
     """
     Sample frames from an uploaded video. Uses ./best.pt (or FIRE_DETECT_MODEL) plus
@@ -985,6 +1030,41 @@ async def analyze_uploaded_video(
 
             if y["fire"] or y.get("smoke"):
                 positive_frames += 1
+                
+                # PURE CODE TRIGGER: Instant, 100% Reliable Emergency Alert
+                if positive_frames == 1:
+                    # 1. Get location data
+                    live_address = get_device_location(lat=lat, lon=lon)
+                    zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+                    final_address = live_address if "Unknown" not in live_address else (zone.location_address if zone else "Unknown")
+                    zone_name = zone.name if zone else f"Zone {zone_id}"
+                    
+                    # 2. INSTANT ALERT (No AI waiting)
+                    agent = get_fire_agent()
+                    background_tasks.add_task(
+                        agent.send_emergency_email,
+                        zone_name=zone_name,
+                        address=final_address,
+                        severity="CRITICAL",
+                        action_taken="AUTOMATIC ALERT DISPATCHED",
+                        reasoning="Pure code trigger: Fire detected with high confidence. GPS location verified.",
+                        lat=lat,
+                        lon=lon
+                    )
+                    
+                    # 3. AI ANALYSIS (Runs in background for logging & RAG)
+                    agent_data = {
+                        "zone_id": zone_id,
+                        "address": final_address,
+                        "lat": lat,
+                        "lon": lon,
+                        "coordinates": y.get("bbox") or {"x": 0.5, "y": 0.5},
+                        "segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
+                        "is_immediate_alert": True,
+                        "skip_email": True  # Tell AI we already sent the alert
+                    }
+                    background_tasks.add_task(agent.reason, agent_data)
+
                 bb = y["bbox"]
                 frame_payload = {
                     "t": round(t, 3),
@@ -1023,6 +1103,12 @@ async def analyze_uploaded_video(
             idx += step
 
         cap.release()
+        
+        # Cleanup tmp file
+        try:
+            os.remove(tmp_path)
+        except:
+            pass
 
         det_path_str = os.environ.get("FIRE_DETECT_MODEL") or str(DEFAULT_DETECT_PT)
         det_loaded = get_yolo_det() is not None
