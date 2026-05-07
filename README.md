@@ -3,40 +3,40 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
 [![YOLOv8](https://img.shields.io/badge/YOLOv8-00A6ED?style=for-the-badge&logo=yolo)](https://ultralytics.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Llama 3.3](https://img.shields.io/badge/LLM-Llama_3.3_70B-818cf8?style=for-the-badge&logo=meta)](https://groq.com/)
+[![Gmail API](https://img.shields.io/badge/Alerts-Gmail_API-e11d48?style=for-the-badge&logo=gmail)](https://developers.google.com/gmail/api)
 
-FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with an agentic incident response loop and a high-end Cyber HUD dashboard.
+FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with a sophisticated **Agentic Emergency Coordinator** and a high-end Cyber HUD dashboard.
 
 ![System Demo](./demo.gif)
 
 ---
 
-
 ## 🚀 System Capabilities
 
-### 1. Autonomous Incident Response (Zero-Latency)
-The system is equipped with an **Agentic Decision Engine** that monitors risk levels in real-time. When detection confidence or area thresholds are breached (>50% Risk Score), the system automatically:
-- **Dispatches Email Alerts**: Notifies facility managers with detection metadata.
-- **Initiates Emergency Calls**: Escalates to 911 services (Simulated logic).
-- **Activates Suppression Systems**: Triggers zone-specific sprinklers (Water, CO2, or Foam) based on the environment (e.g., Server Room vs. Warehouse).
+### 1. Agentic Emergency Coordination (Autonomous)
+The system features a **Fire Management Agent** powered by Llama 3.3 (via Groq) that acts as an "AI Safety Officer." When a fire is detected:
+- **Reasoning Loop**: The AI analyzes detection area, coordinates, and zone safety protocols.
+- **Gmail API Integration**: Dispatches **Premium HTML Alerts** with SOC-style dashboard layouts.
+- **Dynamic Maps**: Automatically embeds Google Maps links for rapid responder navigation.
+- **Voice Escalation**: Generates urgent, natural-sounding scripts for emergency calls (Simulated).
+- **Suppression Control**: Autonomously decides and logs the activation of Water, CO2, or Foam systems.
 
 ### 2. Cyber HUD Visual Overlay
 A sophisticated, canvas-based particle engine that transforms raw video feeds into actionable intelligence:
-- **Heat-Mapped Detections**: Dynamic color scaling (Blue → Yellow → Red) based on thermal intensity.
-- **Particle Physics**: Real-time glowing embers and fire-spark effects for high-impact visualization.
-- **Tactical Data Labels**: Floating HUD elements showing class name, confidence scores, and pixel-area measurements.
-- **Scanline Effects**: Animated "Cyber HUD" scanlines and corner brackets for a military-grade monitoring feel.
+- **Heat-Mapped Detections**: Dynamic color scaling based on thermal intensity.
+- **Tactical Data Labels**: Floating HUD elements showing class, confidence, and pixel-area.
+- **Particle Physics**: Real-time glowing embers and spark effects for high-impact visualization.
 
 ### 3. Agentic RAG Assistant
-Integrated **Retrieval-Augmented Generation (RAG)** system built on LangChain and FAISS. 
-- Constrained knowledge base focused on fire safety protocols, evacuation procedures, and OSHA standards.
-- Context-aware responses that prioritize safety over generic AI behavior.
+Integrated **Retrieval-Augmented Generation (RAG)** system built on FAISS:
+- Constrained knowledge base focused on NFPA (101, 13) and OSHA safety standards.
+- Context-aware responses that prioritize lives and critical infrastructure.
 
 ### 4. Operations Dashboard
 A premium, glassmorphism-inspired UI featuring:
-- **Live Status Monitors**: Real-time health checks for backend and sensor feeds.
-- **Detection Timeline**: Historic trend analysis using Recharts.
-- **Compact Video Controls**: Streamlined workflow for uploading, detecting, and exporting results.
+- **Live Status Monitors**: Real-time health checks for backend and sensors.
+- **Detection Timeline**: Historic trend analysis and incident logging.
 
 ---
 
@@ -53,127 +53,90 @@ graph TB
     end
 
     %% Agentic Layer
-    subgraph Agentic ["🤖 2. AGENTIC LAYER (fire_agent.py)"]
+    subgraph Agentic ["🤖 2. AGENTIC LAYER (Llama 3.3 70B)"]
         direction TB
-        engine[Incident Decision Engine]
-        llm[Groq LLM: Llama 3.3 70B]
-        suppress[Autonomous Suppression Trigger]
-        engine --- llm
+        engine[Emergency Coordinator]
+        tools[Tools: Email, Call, Suppression]
+        engine --- tools
     end
 
-    %% RAG Layer
-    subgraph RAG ["📚 3. RAG LAYER (real_rag_system.py)"]
+    %% Communication Layer
+    subgraph Comm ["📧 3. COMMUNICATION LAYER"]
         direction TB
-        embed[SentenceTransformers]
-        faiss[FAISS Vector DB]
-        kb[Knowledge Base: NFPA 101, 13, 72 & OSHA]
-        kb --> embed --> faiss
+        gmail[Gmail API: OAuth2]
+        html[Premium HTML Templates]
+        maps[Google Maps Integration]
+        gmail --- html --- maps
     end
 
     %% Backend Layer
     subgraph Backend ["⚙️ 4. BACKEND LAYER (FastAPI + SQLite)"]
         direction TB
         api[REST API Endpoints]
-        db[(SQLite Database)]
+        db[(Fire Incident DB)]
+        bg[Background Tasks]
         api --- db
     end
 
     %% Inter-layer connections
-    Detection -->|zone_id, coords, area| Agentic
-    Agentic <-->|Safety Context| RAG
-    Agentic -->|Incident Logs| Backend
-    Backend <-->|Real-time Telemetry| HUD[React HUD Dashboard]
+    Detection -->|Automatic Trigger| Backend
+    Backend -->|Background Thread| Agentic
+    Agentic -->|OAuth2 Token| Comm
+    Comm -->|Stakeholder Alert| User[End User]
 
     %% Styling
     style Detection fill:#0a1a2a,stroke:#22d3ee,stroke-width:2px,color:#fff
     style Agentic fill:#0a1a2a,stroke:#818cf8,stroke-width:2px,color:#fff
-    style RAG fill:#0a1a2a,stroke:#facc15,stroke-width:2px,color:#fff
+    style Comm fill:#0a1a2a,stroke:#e11d48,stroke-width:2px,color:#fff
     style Backend fill:#0a1a2a,stroke:#ec4899,stroke-width:2px,color:#fff
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Setup & Configuration
 
-- **Computer Vision**: Ultralytics YOLOv8 (Segmentation & Detection), OpenCV
-- **Backend**: FastAPI, SQLAlchemy (SQLite), Pydantic
-- **AI/LLM**: SentenceTransformers (Embeddings), FAISS (Vector Store), GPT-based Knowledge Retrieval
-- **Frontend**: React 18, Vite, Lucide-React, Recharts
-- **Styling**: Custom CSS3 (Glassmorphism, Particle Engine, Keyframe Animations)
+### 1) Prerequisites
+- Python 3.10+
+- Node.js 18+
+- Google Cloud Console Project (with Gmail API enabled)
+- Groq API Key
 
----
+### 2) Environment Setup (`.env`)
+Create a `.env` in the root directory:
+```env
+# AI & Core
+GROQ_API_KEY=your_key_here
+FIRE_DETECT_MODEL=./models/best.pt
 
-## 🧠 Model Training & Performance
+# Emergency Alerts
+REMINDER_EMAIL_SENDER=your_gmail@gmail.com
+REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com,stakeholder2@email.com
+```
 
-This system utilizes high-performance deep learning models optimized for real-time safety monitoring.
+### 3) Gmail API Authentication
+1. Download your `credentials.json` from the Google Cloud Console.
+2. Place it in the root directory.
+3. Run `python fire_agent.py` once to trigger the OAuth2 flow and generate `token.json`.
 
-- **Architecture**: Trained on **YOLOv8l** (Large) for maximum feature extraction.
-- **Dataset**: Trained on the **FASDD (Fire and Smoke Detection Dataset)** featuring over **95,000 images**.
-- **Detection Accuracy**: Achieved **80% mAP** after just **17 epochs** of fine-tuning.
-- **Segmentation Accuracy**: High-fidelity segmentation masks achieved **92% accuracy** using YOLOv8-seg.
-- **Hardware**: All training was performed on **Kaggle GPU** environments.
+### 4) Installation
+```bash
+# Backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python fire_backend.py
+
+# Frontend
+cd frontend && npm install && npm run dev
+```
 
 ---
 
 ## 📂 Project Structure
 
-```text
-.
-├── fire_backend.py        # Core FastAPI Server & CV Logic
-├── fire_agent.py          # Autonomous Decision Logic & Incident Handling
-├── real_rag_system.py     # Vector Database & Retrieval Engine
-├── models/                # YOLO Weights & Segmentation Modules
-├── tests/                 # System Validation Scripts
-├── frontend/              # React Application
-│   ├── src/
-│   │   ├── App.jsx           # Dashboard Hub
-│   │   ├── overlay-enhanced.js # Cyber HUD Particle Engine
-│   │   └── index.css         # HUD Design System
-│   └── package.json
-└── .env.example           # Environment Template
-```
-
----
-
-## ⚡ Quick Start
-
-### 1) Backend Environment
-```bash
-# Create Virtual Environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install Dependencies
-pip install -r requirements.txt
-
-# Start the CV/FastAPI engine
-python fire_backend.py
-```
-*Base URL: `http://localhost:8000` | Docs: `/docs`*
-
-### 2) Frontend Environment
-```bash
-# Navigate and launch dashboard
-cd frontend
-npm install
-npm run dev
-```
-### 3. Environment Configuration
-Create a `.env` file in the root directory based on `.env.example`:
-```env
-FIRE_DETECT_MODEL=./best.pt
-BACKEND_URL=http://localhost:8000
-GROQ_API_KEY=your_groq_api_key
-```
-
----
-
-## 📋 Operational Procedures
-
-1. **Dashboard Initialization**: Ensure the top-right status chip shows **ONLINE**.
-2. **Video Analysis**: Upload any MP4/AVI file. The system will auto-hide the upload panel to maximize the Cyber HUD viewport.
-3. **Emergency Override**: Manual trigger buttons are available in the "Incident Response" panel for human-in-the-loop control.
-4. **Export**: Processed videos with the Cyber HUD burned-in can be exported via the "Export" button in the compact controller.
+- `fire_backend.py`: Core FastAPI Server with background task orchestration.
+- `fire_agent.py`: Agentic reasoning loop, Gmail HTML builder, and tool definitions.
+- `real_rag_system.py`: Vector search engine for safety protocols.
+- `test_emergency.py`: End-to-end validation script for the alert pipeline.
 
 ---
 

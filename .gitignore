@@ -2,11 +2,24 @@
 # Fire & Smoke Detection — .gitignore
 # ============================================================
 
-# Secrets — never commit API keys
+# Sensitive Credentials
 .env
+credentials.json
+token.json
+
+# Databases and Local Storage
+fire_system.db
+detection_images/
+fire_seg_final_results.zip
+*.pt
+
+# Python/Environment
+__pycache__/
+.venv/
+.env.local
+.DS_Store
 
 # Python virtual environment
-.venv/
 venv/
 env/
 

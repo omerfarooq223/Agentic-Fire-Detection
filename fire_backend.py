@@ -7,7 +7,7 @@ SQLite + FastAPI
 - Clean, production-ready
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from real_rag_system import RealRAGSystem
+from fire_agent import FireManagementAgent
 import requests
 from dotenv import load_dotenv
 
@@ -46,6 +47,7 @@ _yolo_det: Any = None
 _yolo_seg: Any = None
 _yolo_det_checked = False
 _rag_system: Optional[Any] = None
+_fire_agent: Optional[FireManagementAgent] = None
 
 def generate_rag_answer(query: str, retrieved_docs: list, groq_key: str = None) -> str:
     """
@@ -132,13 +134,15 @@ class Zone(Base):
     name = Column(String, unique=True)
     area_sqm = Column(Float)  # Square meters
     description = Column(String)
+    location_address = Column(String)  # Detailed physical address
     
     def to_dict(self):
         return {
             "zone_id": self.zone_id,
             "name": self.name,
             "area_sqm": self.area_sqm,
-            "description": self.description
+            "description": self.description,
+            "location_address": self.location_address
         }
 
 
@@ -418,6 +422,13 @@ def get_rag_system() -> Any:
     return _rag_system
 
 
+def get_fire_agent() -> FireManagementAgent:
+    global _fire_agent
+    if _fire_agent is None:
+        _fire_agent = FireManagementAgent()
+    return _fire_agent
+
+
 def _boxes_from_result(result, im_w: int, im_h: int) -> list:
     out = []
     if result.boxes is None or len(result.boxes) == 0:
@@ -623,9 +634,24 @@ def annotate_frame_bgr(frame_bgr: np.ndarray, y: dict, conf: float) -> np.ndarra
 def initialize_zones(db: Session = Depends(get_db)):
     """Initialize 3 zones (run once)"""
     zones_data = [
-        {"name": "Lobby", "area_sqm": 500, "description": "Main entrance and reception area"},
-        {"name": "Server Room", "area_sqm": 200, "description": "Data center with critical infrastructure"},
-        {"name": "Warehouse", "area_sqm": 2000, "description": "Storage and inventory area"}
+        {
+            "name": "Lobby", 
+            "area_sqm": 500, 
+            "description": "Main entrance and reception area",
+            "location_address": "Main Entrance, Ground Floor, 123 Innovation Drive, Tech City"
+        },
+        {
+            "name": "Server Room", 
+            "area_sqm": 200, 
+            "description": "Data center with critical infrastructure",
+            "location_address": "Restricted Access Wing, 2nd Floor, Building A, 123 Innovation Drive"
+        },
+        {
+            "name": "Warehouse", 
+            "area_sqm": 2000, 
+            "description": "Storage and inventory area",
+            "location_address": "Logistics Center, East Side, 125 Innovation Drive"
+        }
     ]
     
     for zone_data in zones_data:
@@ -691,6 +717,7 @@ def initialize_procedures(db: Session = Depends(get_db)):
 # ============= DETECTION ENDPOINTS =============
 @app.post("/api/detections")
 async def log_detection(
+    background_tasks: BackgroundTasks,
     zone_id: int = Form(...),
     coordinates_x: float = Form(...),
     coordinates_y: float = Form(...),
@@ -734,6 +761,17 @@ async def log_detection(
         db.add(db_detection)
         db.commit()
         db.refresh(db_detection)
+        
+        # AUTOMATIC EMERGENCY RESPONSE
+        # Trigger the AI Agent reasoning in the background
+        agent = get_fire_agent()
+        agent_data = {
+            "zone_id": zone_id,
+            "coordinates": {"x": coordinates_x, "y": coordinates_y},
+            "segment_area_pixels": segment_area_pixels,
+            "detection_id": db_detection.detection_id
+        }
+        background_tasks.add_task(agent.reason, agent_data)
         
         return {
             "status": "Detection logged",

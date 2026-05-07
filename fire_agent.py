@@ -12,6 +12,14 @@ import json
 from dotenv import load_dotenv
 from real_rag_system import RealRAGSystem
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import base64
+import numpy as np
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Load API key from .env (never hard-code secrets!)
 load_dotenv()
@@ -22,6 +30,11 @@ rag = RealRAGSystem()
 # ============= GROQ API SETUP =============
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # Loaded from .env
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# ============= EMAIL SETUP =============
+SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
+RECEIVER_EMAILS = os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
 
 class FireManagementAgent:
     def __init__(self, groq_api_key: str = None):
@@ -136,28 +149,78 @@ class FireManagementAgent:
                         "required": ["zone_id", "action", "suppression_type", "reasoning"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_emergency_email",
+                    "description": "Send a structured emergency email alert based on detection data",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "zone_name": { "type": "string" },
+                            "address": { "type": "string" },
+                            "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+                            "action_taken": { "type": "string" },
+                            "reasoning": { "type": "string" }
+                        },
+                        "required": ["zone_name", "address", "severity", "action_taken"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "initiate_emergency_call",
+                    "description": "Trigger an automated emergency call with a generated script",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "script": {
+                                "type": "string",
+                                "description": "The script for the AI to read out during the call"
+                            },
+                            "recipient": {
+                                "type": "string",
+                                "description": "The phone number to call"
+                            }
+                        },
+                        "required": ["script", "recipient"]
+                    }
+                }
             }
         ]
     
+    # ============= HELPER FUNCTIONS =============
+    def _json_serialize(self, obj: Any) -> str:
+        """Helper to serialize objects, handling NumPy types like float32"""
+        def default(o):
+            if isinstance(o, (np.float32, np.float64)):
+                return float(o)
+            if isinstance(o, (np.int32, np.int64)):
+                return int(o)
+            return str(o)
+        return json.dumps(obj, default=default)
+
     # ============= TOOL IMPLEMENTATIONS =============
     def query_zone_procedure(self, zone_id: int) -> str:
         """Get procedure for zone"""
         proc = self.rag.get_zone_procedure(zone_id)
         if proc:
-            return json.dumps(proc)
-        return json.dumps({"error": f"Procedure not found for zone {zone_id}"})
+            return self._json_serialize(proc)
+        return self._json_serialize({"error": f"Procedure not found for zone {zone_id}"})
     
     def get_suppression_info(self, zone_id: int) -> str:
         """Get suppression info for zone"""
         supp = self.rag.get_suppression_info(zone_id)
         if supp:
-            return json.dumps(supp)
-        return json.dumps({"error": f"Suppression info not found for zone {zone_id}"})
+            return self._json_serialize(supp)
+        return self._json_serialize({"error": f"Suppression info not found for zone {zone_id}"})
     
     def query_rag(self, query: str) -> str:
         """Search knowledge base"""
         results = self.rag.retrieve(query, top_k=2)
-        return json.dumps(results)
+        return self._json_serialize(results)
     
     def activate_suppression(self, zone_id: int, suppression_type: str, reason: str) -> str:
         """Activate suppression system"""
@@ -168,13 +231,138 @@ class FireManagementAgent:
             suppression_type=suppression_type,
             reasoning=reason
         )
-        return json.dumps({
+        return self._json_serialize({
             "status": "activated",
             "zone_id": zone_id,
             "suppression_type": suppression_type,
             "timestamp": datetime.utcnow().isoformat()
         })
     
+    
+    def build_emergency_html(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str) -> str:
+        """Generate a premium Cyber HUD style HTML email"""
+        timestamp = datetime.now().strftime("%A, %B %d, %Y | %H:%M:%S")
+        score_color = "#e11d48" if severity == "CRITICAL" else "#f59e0b"
+        
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+        <body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f8fafc;">
+        <div style="max-width:600px;margin:20px auto;background:#1e293b;border-radius:16px;overflow:hidden;border:1px solid #334155;box-shadow:0 20px 50px rgba(0,0,0,0.5);">
+          
+          <div style="background:linear-gradient(135deg, #e11d48 0%, #9f1239 100%);padding:30px;text-align:center;">
+            <div style="font-size:12px;font-weight:800;letter-spacing:4px;color:rgba(255,255,255,0.7);text-transform:uppercase;margin-bottom:8px;">FireWatch AI Agent</div>
+            <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:-0.5px;">EMERGENCY DETECTED</div>
+          </div>
+
+          <div style="background:#0f172a;padding:12px 30px;border-bottom:1px solid #334155;">
+            <table width="100%">
+              <tr>
+                <td style="font-size:11px;font-weight:700;color:#94a3b8;">PRIORITY: <span style="color:{score_color}">{severity}</span></td>
+                <td style="font-size:11px;font-weight:700;color:#94a3b8;text-align:right;">ID: FW-{datetime.now().strftime('%y%m%d%H%M')}</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="padding:30px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding-bottom:25px;">
+                  <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Location & Zone</div>
+                  <div style="font-size:18px;font-weight:700;color:#f1f5f9;">{zone_name}</div>
+                  <div style="font-size:14px;color:#94a3b8;margin-top:4px;margin-bottom:12px;">{address}</div>
+                  <a href="https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}" 
+                     style="display:inline-block;background:rgba(34, 211, 238, 0.1);color:#22d3ee;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:700;border:1px solid rgba(34, 211, 238, 0.3);">
+                    📍 Open in Maps
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td style="background:rgba(225, 29, 72, 0.1);border-radius:12px;padding:20px;border:1px solid rgba(225, 29, 72, 0.2);">
+                  <div style="font-size:10px;font-weight:700;color:#e11d48;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">Action Triggered</div>
+                  <div style="font-size:16px;font-weight:700;color:#f8fafc;">{action_taken}</div>
+                  <div style="font-size:13px;color:#cbd5e1;margin-top:8px;line-height:1.5;">{reasoning}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="padding:0 30px 30px;">
+            <div style="background:#0f172a;border-radius:12px;padding:20px;">
+              <table width="100%">
+                <tr>
+                  <td>
+                    <div style="font-size:10px;color:#64748b;text-transform:uppercase;">Time Detected</div>
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-top:4px;">{timestamp}</div>
+                  </td>
+                  <td style="text-align:right;">
+                    <div style="font-size:10px;color:#64748b;text-transform:uppercase;">Status</div>
+                    <div style="font-size:13px;font-weight:600;color:#22d3ee;margin-top:4px;">Active Response</div>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <div style="padding:0 30px 30px;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Immediate Safety Protocol</div>
+            <div style="background:#e11d48;color:#ffffff;padding:15px;border-radius:8px;text-align:center;font-weight:800;font-size:14px;">
+              ⚠️ EVACUATE THE AREA IMMEDIATELY
+            </div>
+            <div style="font-size:12px;color:#94a3b8;margin-top:12px;text-align:center;line-height:1.5;">
+              Proceed to the nearest assembly point. Do not use elevators. Ensure all personnel are accounted for.
+            </div>
+          </div>
+
+          <div style="background:#0f172a;padding:20px;text-align:center;border-top:1px solid #334155;">
+            <a href="https://github.com/omerfarooq223/Agentic-Fire-Detection" style="color:#22d3ee;text-decoration:none;font-size:11px;font-weight:700;">Open FireWatch Dashboard →</a>
+            <div style="font-size:10px;color:#475569;margin-top:10px;">FireWatch AI  |  Secure Intelligence  |  {datetime.now().year}</div>
+          </div>
+        </div>
+        </body>
+        </html>
+        """
+
+    def send_emergency_email(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str = "") -> str:
+        """Send emergency email via official Gmail API using a premium HTML template"""
+        if not os.path.exists('token.json'):
+            return self._json_serialize({"error": "token.json not found."})
+        
+        subject = f"🚨 EMERGENCY FIRE ALERT: {zone_name} ({severity})"
+        html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning)
+        
+        try:
+            creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/gmail.send'])
+            service = build('gmail', 'v1', credentials=creds)
+            
+            message = MIMEMultipart()
+            message['To'] = ", ".join(RECEIVER_EMAILS)
+            message['From'] = SENDER_EMAIL
+            message['Subject'] = subject
+            message.attach(MIMEText(html_content, 'html'))
+            
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            service.users().messages().send(userId="me", body={'raw': raw_message}).execute()
+            
+            return self._json_serialize({"status": "HTML Alert sent successfully", "recipients": RECEIVER_EMAILS})
+        except Exception as e:
+            return self._json_serialize({"error": f"Failed to send HTML alert: {str(e)}"})
+
+    def initiate_emergency_call(self, script: str, recipient: str) -> str:
+        """Simulate or trigger Twilio call"""
+        # For now, we simulate the call by logging the script
+        # In a real implementation, this would use the twilio library
+        print(f"\n📞 INITIATING EMERGENCY CALL TO: {recipient}")
+        print(f"   SCRIPT: \"{script}\"")
+        
+        return self._json_serialize({
+            "status": "Call initiated (Simulated)",
+            "recipient": recipient,
+            "script": script,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+
     def log_incident(self, zone_id: int, action: str, suppression_type: str, reasoning: str) -> str:
         """Log incident"""
         incident = {
@@ -191,7 +379,7 @@ class FireManagementAgent:
         print(f"   Suppression: {suppression_type}")
         print(f"   Reasoning: {reasoning}")
         
-        return json.dumps(incident)
+        return self._json_serialize(incident)
     
     # ============= PROCESS TOOL CALLS =============
     def process_tool_call(self, tool_name: str, tool_input: dict) -> str:
@@ -207,6 +395,19 @@ class FireManagementAgent:
                 zone_id=tool_input.get("zone_id"),
                 suppression_type=tool_input.get("suppression_type"),
                 reason=tool_input.get("reason")
+            )
+        elif tool_name == "send_emergency_email":
+            return self.send_emergency_email(
+                zone_name=tool_input.get("zone_name"),
+                address=tool_input.get("address"),
+                severity=tool_input.get("severity"),
+                action_taken=tool_input.get("action_taken"),
+                reasoning=tool_input.get("reasoning", "")
+            )
+        elif tool_name == "initiate_emergency_call":
+            return self.initiate_emergency_call(
+                script=tool_input.get("script"),
+                recipient=tool_input.get("recipient", os.getenv("YOUR_PERSONAL_PHONE", "DEMO_NUMBER"))
             )
         elif tool_name == "log_incident":
             return self.log_incident(
@@ -243,12 +444,21 @@ class FireManagementAgent:
 3. Query the knowledge base for relevant fire safety info
 4. Decide on appropriate suppression system activation
 5. Log the incident with your reasoning
+6. Trigger 'send_emergency_email' with the structured detection data. (ONLY ONCE)
+7. Generate a concise, urgent call script and trigger 'initiate_emergency_call'. (ONLY ONCE)
 
-You have access to tools to query procedures, suppression info, and the knowledge base.
-Use these tools to make informed decisions based on fire safety protocols.
+CRITICAL RULE:
+- You must send exactly ONE email and make exactly ONE call per detection. 
+- If you see a tool result for 'send_emergency_email' or 'initiate_emergency_call' in the message history, DO NOT call them again.
+- Once the alert tools are called, summarize your final response and exit.
 
+MANDATORY RULES:
+- Use 'send_emergency_email' as soon as fire is confirmed.
+- For 'severity', use 'CRITICAL' if segment area is > 1000 pixels, otherwise 'HIGH'.
+- The call script should still be natural and urgent.
+
+You have access to tools to query procedures, suppression info, the knowledge base, and communication channels.
 Always follow NFPA standards and zone-specific procedures.
-Activate the suppression system appropriate for the zone.
 Log all decisions with clear reasoning."""
         
         user_message = f"""FIRE DETECTION ALERT:
@@ -287,7 +497,7 @@ Provide your analysis and decisions."""
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "llama-3.1-70b-versatile",
+                        "model": "llama-3.3-70b-versatile",
                         "messages": messages,
                         "tools": self.tools,
                         "tool_choice": "auto",
