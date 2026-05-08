@@ -48,6 +48,56 @@ Integrated **Retrieval-Augmented Generation (RAG)** system built on FAISS for NF
 
 ---
 
+## 🏗️ Technical Architecture
+
+```mermaid
+graph TB
+    %% Detection Layer
+    subgraph Detection ["🛡️ 1. DETECTION LAYER (YOLOv8)"]
+        direction TB
+        input[Video / CCTV Stream] --> yolo[best.pt Detection Engine]
+    end
+
+    %% Hybrid Engine
+    subgraph Hybrid ["⚙️ 2. HYBRID RESPONSE ENGINE"]
+        direction TB
+        direct[Direct Code: 0-Latency Alert]
+        agent[AI Agent: Deep Analysis]
+        direct --- agent
+    end
+
+    %% Communication Layer
+    subgraph Comm ["📧 3. COMMUNICATION LAYER"]
+        direction TB
+        gmail[Gmail API: OAuth2]
+        maps[High-Accuracy GPS Mapping]
+        gmail --- maps
+    end
+
+    %% Backend Layer
+    subgraph Backend ["💾 4. DATA LAYER (FastAPI + SQLite)"]
+        direction TB
+        db[(Fire Incident DB)]
+        rag[RAG Safety Knowledge]
+    end
+
+    %% Inter-layer connections
+    Detection -->|First Frame Detection| direct
+    direct -->|Instant Dispatch| Comm
+    direct -->|Background Task| agent
+    agent -->|Context Retrieval| rag
+    agent -->|Incident Logging| db
+    Comm -->|Stakeholder Alert| User[End User]
+
+    %% Styling
+    style Detection fill:#0a1a2a,stroke:#22d3ee,stroke-width:2px,color:#fff
+    style Hybrid fill:#0a1a2a,stroke:#818cf8,stroke-width:2px,color:#fff
+    style Comm fill:#0a1a2a,stroke:#e11d48,stroke-width:2px,color:#fff
+    style Backend fill:#0a1a2a,stroke:#ec4899,stroke-width:2px,color:#fff
+```
+
+---
+
 ## 🏛️ System Architecture & Data Flow
 
 FireWatch AI is built on a modular, asynchronous architecture designed for high availability and low-latency response.
