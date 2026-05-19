@@ -11,9 +11,9 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, Bac
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, LargeBinary, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base, selectinload
+from sqlalchemy import select, update, delete, func, Column, Integer, String, Float, DateTime, ForeignKey, LargeBinary
 from pydantic import BaseModel
 from datetime import datetime
 import os
@@ -117,9 +117,9 @@ Provide a clear, practical answer."""
 
 
 # ============= DATABASE SETUP =============
-DATABASE_URL = f"sqlite:///{PROJECT_ROOT / 'fire_system.db'}"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+DATABASE_URL = f"sqlite+aiosqlite:///{PROJECT_ROOT / 'fire_system.db'}"
+engine = create_async_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
 Base = declarative_base()
 
 # Create directories
@@ -218,10 +218,6 @@ class SafetyProcedure(Base):
         }
 
 
-# ============= CREATE TABLES =============
-Base.metadata.create_all(bind=engine)
-
-
 # ============= PYDANTIC SCHEMAS =============
 class DetectionCreate(BaseModel):
     zone_id: int
@@ -264,6 +260,35 @@ app.add_middleware(
 
 # Serve detection images
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+
+
+# ============= CREATE TABLES (ASYNC) & CREDENTIAL CHECKS =============
+@app.on_event("startup")
+async def startup():
+    # 1. Create DB Tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    # 2. Check Gmail API (Alerts)
+    if not os.path.exists('token.json'):
+        print("⚠️  WARNING: 'token.json' not found. Gmail alerts will fail. Run the system and authorize to generate it.")
+    else:
+        print("✅ Gmail API (token.json) detected.")
+        
+    # 3. Check Twilio (Voice Calls)
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
+    if not all([twilio_sid, twilio_token, twilio_phone]):
+        print("⚠️  WARNING: Twilio credentials missing in .env. Emergency calls will be disabled.")
+    else:
+        print("✅ Twilio Voice credentials detected.")
+    
+    # 4. Check YOLO Weights
+    if not DEFAULT_DETECT_PT.is_file():
+        print(f"⚠️  WARNING: YOLO weights not found at {DEFAULT_DETECT_PT}. Ensure 'best.pt' is present.")
+    else:
+        print(f"✅ YOLO Weights detected at {DEFAULT_DETECT_PT}.")
 
 
 # ============= UTILITY FUNCTIONS =============
@@ -329,12 +354,12 @@ def create_beautiful_detection_image(image_data: bytes, zone_name: str, coords: 
         return "error.png"
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db():
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db
+        finally:
+            await db.close()
 
 
 def detect_fire_bbox_bgr(frame_bgr: np.ndarray):
@@ -661,7 +686,7 @@ def annotate_frame_bgr(frame_bgr: np.ndarray, y: dict, conf: float) -> np.ndarra
 
 # ============= INITIALIZATION ENDPOINTS =============
 @app.post("/api/init/zones")
-def initialize_zones(db: Session = Depends(get_db)):
+async def initialize_zones(db: AsyncSession = Depends(get_db)):
     """Initialize 3 zones (run once)"""
     zones_data = [
         {
@@ -685,16 +710,17 @@ def initialize_zones(db: Session = Depends(get_db)):
     ]
     
     for zone_data in zones_data:
-        existing = db.query(Zone).filter(Zone.name == zone_data["name"]).first()
+        result = await db.execute(select(Zone).filter(Zone.name == zone_data["name"]))
+        existing = result.scalars().first()
         if not existing:
             db.add(Zone(**zone_data))
     
-    db.commit()
+    await db.commit()
     return {"status": "Zones initialized", "count": 3}
 
 
 @app.post("/api/init/procedures")
-def initialize_procedures(db: Session = Depends(get_db)):
+async def initialize_procedures(db: AsyncSession = Depends(get_db)):
     """Initialize safety procedures for each zone"""
     procedures = [
         {
@@ -736,11 +762,12 @@ def initialize_procedures(db: Session = Depends(get_db)):
     ]
     
     for proc in procedures:
-        existing = db.query(SafetyProcedure).filter(SafetyProcedure.zone_id == proc["zone_id"]).first()
+        result = await db.execute(select(SafetyProcedure).filter(SafetyProcedure.zone_id == proc["zone_id"]))
+        existing = result.scalars().first()
         if not existing:
             db.add(SafetyProcedure(**proc))
     
-    db.commit()
+    await db.commit()
     return {"status": "Procedures initialized", "count": 3}
 
 
@@ -755,7 +782,7 @@ async def log_detection(
     bbox_h: float = Form(...),
     segment_area_pixels: float = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Log a detection with image
@@ -766,7 +793,8 @@ async def log_detection(
         image_data = await file.read()
         
         # Create beautiful image with overlays
-        zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+        result = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
+        zone = result.scalars().first()
         zone_name = zone.name if zone else f"Zone {zone_id}"
         
         filename = create_beautiful_detection_image(
@@ -789,8 +817,8 @@ async def log_detection(
         )
         
         db.add(db_detection)
-        db.commit()
-        db.refresh(db_detection)
+        await db.commit()
+        await db.refresh(db_detection)
         
         # AUTOMATIC EMERGENCY RESPONSE
         # Trigger the AI Agent reasoning in the background
@@ -798,7 +826,8 @@ async def log_detection(
         
         # DYNAMIC LOCATION: Use live device location if possible
         live_address = get_device_location()
-        zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+        result = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
+        zone = result.scalars().first()
         # Fallback to DB if live detection fails
         final_address = live_address if "Unknown" not in live_address else (zone.location_address if zone else "Unknown")
         
@@ -825,20 +854,22 @@ async def log_detection(
 
 
 @app.get("/api/detections")
-def get_detections(zone_id: int = None, db: Session = Depends(get_db)):
+async def get_detections(zone_id: int = None, db: AsyncSession = Depends(get_db)):
     """Get all detections, optionally filtered by zone"""
-    query = db.query(Detection)
+    stmt = select(Detection)
     if zone_id:
-        query = query.filter(Detection.zone_id == zone_id)
+        stmt = stmt.filter(Detection.zone_id == zone_id)
     
-    detections = query.order_by(Detection.timestamp.desc()).all()
+    result = await db.execute(stmt.order_by(Detection.timestamp.desc()))
+    detections = result.scalars().all()
     return [d.to_dict() for d in detections]
 
 
 @app.get("/api/detections/{detection_id}")
-def get_detection(detection_id: int, db: Session = Depends(get_db)):
+async def get_detection(detection_id: int, db: AsyncSession = Depends(get_db)):
     """Get specific detection"""
-    detection = db.query(Detection).filter(Detection.detection_id == detection_id).first()
+    result = await db.execute(select(Detection).filter(Detection.detection_id == detection_id))
+    detection = result.scalars().first()
     if not detection:
         raise HTTPException(status_code=404, detail="Detection not found")
     return detection.to_dict()
@@ -846,12 +877,12 @@ def get_detection(detection_id: int, db: Session = Depends(get_db)):
 
 # ============= INCIDENT ENDPOINTS =============
 @app.post("/api/incidents")
-def log_incident(incident: IncidentCreate, db: Session = Depends(get_db)):
+async def log_incident(incident: IncidentCreate, db: AsyncSession = Depends(get_db)):
     """Log an incident (agent decision)"""
     db_incident = Incident(**incident.dict())
     db.add(db_incident)
-    db.commit()
-    db.refresh(db_incident)
+    await db.commit()
+    await db.refresh(db_incident)
     return {
         "status": "Incident logged",
         "incident_id": db_incident.incident_id,
@@ -860,49 +891,54 @@ def log_incident(incident: IncidentCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/incidents")
-def get_incidents(zone_id: int = None, db: Session = Depends(get_db)):
+async def get_incidents(zone_id: int = None, db: AsyncSession = Depends(get_db)):
     """Get all incidents, optionally filtered by zone"""
-    query = db.query(Incident)
+    stmt = select(Incident)
     if zone_id:
-        query = query.filter(Incident.zone_id == zone_id)
+        stmt = stmt.filter(Incident.zone_id == zone_id)
     
-    incidents = query.order_by(Incident.timestamp.desc()).all()
+    result = await db.execute(stmt.order_by(Incident.timestamp.desc()))
+    incidents = result.scalars().all()
     return [i.to_dict() for i in incidents]
 
 
 @app.get("/api/incidents/{incident_id}")
-def get_incident(incident_id: int, db: Session = Depends(get_db)):
+async def get_incident(incident_id: int, db: AsyncSession = Depends(get_db)):
     """Get specific incident"""
-    incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
+    result = await db.execute(select(Incident).filter(Incident.incident_id == incident_id))
+    incident = result.scalars().first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     return incident.to_dict()
 
 
 @app.patch("/api/incidents/{incident_id}/status")
-def update_incident_status(incident_id: int, status: str, db: Session = Depends(get_db)):
+async def update_incident_status(incident_id: int, status: str, db: AsyncSession = Depends(get_db)):
     """Update incident status (active, resolved, manual_override)"""
-    incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
+    result = await db.execute(select(Incident).filter(Incident.incident_id == incident_id))
+    incident = result.scalars().first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
     
     incident.status = status
-    db.commit()
+    await db.commit()
     return {"status": "Incident updated", "incident_id": incident_id, "new_status": status}
 
 
 # ============= ZONE ENDPOINTS =============
 @app.get("/api/zones")
-def get_zones(db: Session = Depends(get_db)):
+async def get_zones(db: AsyncSession = Depends(get_db)):
     """Get all zones"""
-    zones = db.query(Zone).all()
+    result = await db.execute(select(Zone))
+    zones = result.scalars().all()
     return [z.to_dict() for z in zones]
 
 
 @app.get("/api/zones/{zone_id}")
-def get_zone(zone_id: int, db: Session = Depends(get_db)):
+async def get_zone(zone_id: int, db: AsyncSession = Depends(get_db)):
     """Get specific zone"""
-    zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+    result = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
+    zone = result.scalars().first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
     return zone.to_dict()
@@ -910,9 +946,10 @@ def get_zone(zone_id: int, db: Session = Depends(get_db)):
 
 # ============= PROCEDURE ENDPOINTS =============
 @app.get("/api/procedures/{zone_id}")
-def get_procedure(zone_id: int, db: Session = Depends(get_db)):
+async def get_procedure(zone_id: int, db: AsyncSession = Depends(get_db)):
     """Get safety procedure for a zone"""
-    procedure = db.query(SafetyProcedure).filter(SafetyProcedure.zone_id == zone_id).first()
+    result = await db.execute(select(SafetyProcedure).filter(SafetyProcedure.zone_id == zone_id))
+    procedure = result.scalars().first()
     if not procedure:
         raise HTTPException(status_code=404, detail="Procedure not found")
     return procedure.to_dict()
@@ -920,32 +957,36 @@ def get_procedure(zone_id: int, db: Session = Depends(get_db)):
 
 # ============= DASHBOARD ENDPOINTS =============
 @app.get("/api/dashboard/summary")
-def get_dashboard_summary(db: Session = Depends(get_db)):
+async def get_dashboard_summary(db: AsyncSession = Depends(get_db)):
     """Get dashboard summary stats"""
-    total_detections = db.query(Detection).count()
-    active_incidents = db.query(Incident).filter(Incident.status == "active").count()
-    zones = db.query(Zone).count()
+    total_detections = await db.scalar(select(func.count(Detection.detection_id)))
+    active_incidents = await db.scalar(select(func.count(Incident.incident_id)).filter(Incident.status == "active"))
+    zones = await db.scalar(select(func.count(Zone.zone_id)))
+    
+    last_det_res = await db.execute(select(Detection).order_by(Detection.timestamp.desc()))
+    last_det = last_det_res.scalars().first()
     
     return {
         "total_detections": total_detections,
         "active_incidents": active_incidents,
         "total_zones": zones,
-        "last_detection": db.query(Detection).order_by(Detection.timestamp.desc()).first().timestamp.isoformat() if total_detections > 0 else None
+        "last_detection": last_det.timestamp.isoformat() if last_det else None
     }
 
 
 @app.get("/api/dashboard/incidents-by-zone")
-def get_incidents_by_zone(db: Session = Depends(get_db)):
+async def get_incidents_by_zone(db: AsyncSession = Depends(get_db)):
     """Get incident counts by zone"""
-    zones = db.query(Zone).all()
+    result_zones = await db.execute(select(Zone))
+    zones = result_zones.scalars().all()
     result = []
     
     for zone in zones:
-        incident_count = db.query(Incident).filter(Incident.zone_id == zone.zone_id).count()
+        count = await db.scalar(select(func.count(Incident.incident_id)).filter(Incident.zone_id == zone.zone_id))
         result.append({
             "zone_id": zone.zone_id,
             "zone_name": zone.name,
-            "incident_count": incident_count
+            "incident_count": count
         })
     
     return result
@@ -961,7 +1002,7 @@ async def analyze_uploaded_video(
     zone_id: int = 1,
     lat: float = None,
     lon: float = None,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Sample frames from an uploaded video. Uses ./best.pt (or FIRE_DETECT_MODEL) plus
@@ -1035,7 +1076,8 @@ async def analyze_uploaded_video(
                 if positive_frames == 1:
                     # 1. Get location data
                     live_address = get_device_location(lat=lat, lon=lon)
-                    zone = db.query(Zone).filter(Zone.zone_id == zone_id).first()
+                    zone_res = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
+                    zone = zone_res.scalars().first()
                     final_address = live_address if "Unknown" not in live_address else (zone.location_address if zone else "Unknown")
                     zone_name = zone.name if zone else f"Zone {zone_id}"
                     

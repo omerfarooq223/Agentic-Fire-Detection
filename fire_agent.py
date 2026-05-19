@@ -20,6 +20,8 @@ import numpy as np
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from twilio.rest import Client
+from typing import Any, Optional
 
 # Load API key from .env (never hard-code secrets!)
 load_dotenv()
@@ -35,6 +37,11 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
 RECEIVER_EMAILS = os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
+
+# ============= TWILIO SETUP =============
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
 class FireManagementAgent:
     def __init__(self, groq_api_key: str = None):
@@ -183,6 +190,10 @@ class FireManagementAgent:
                             "recipient": {
                                 "type": "string",
                                 "description": "The phone number to call"
+                            },
+                            "press_digits": {
+                                "type": "string",
+                                "description": "Optional digits to press after answering (e.g. 'wwww1' to wait and press 1 for a menu)"
                             }
                         },
                         "required": ["script", "recipient"]
@@ -358,19 +369,62 @@ class FireManagementAgent:
         except Exception as e:
             return self._json_serialize({"error": f"Failed to send HTML alert: {str(e)}"})
 
-    def initiate_emergency_call(self, script: str, recipient: str) -> str:
-        """Simulate or trigger Twilio call"""
-        # For now, we simulate the call by logging the script
-        # In a real implementation, this would use the twilio library
+    def initiate_emergency_call(self, script: str, recipient: str, press_digits: str = None) -> str:
+        """Trigger a real Twilio call with TwiML for repeating message and menu navigation"""
         print(f"\n📞 INITIATING EMERGENCY CALL TO: {recipient}")
         print(f"   SCRIPT: \"{script}\"")
-        
-        return self._json_serialize({
-            "status": "Call initiated (Simulated)",
-            "recipient": recipient,
-            "script": script,
-            "timestamp": datetime.utcnow().isoformat()
-        })
+        if press_digits:
+            print(f"   MENU NAVIGATION: Pressing '{press_digits}'")
+
+        if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
+            return self._json_serialize({
+                "status": "Call failed (Twilio credentials missing)",
+                "error": "Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER in .env"
+            })
+
+        try:
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            
+            # Construct TwiML to say the message and repeat it 3 times
+            # Using <Say> with loop attribute
+            twiml_content = f"""
+            <Response>
+                <Pause length="1"/>
+                <Say loop="3" voice="Polly.Joey">{script}</Say>
+                <Say>Repeating one last time.</Say>
+                <Say voice="Polly.Joey">{script}</Say>
+                <Pause length="1"/>
+                <Say>Goodbye.</Say>
+            </Response>
+            """
+            
+            call_params = {
+                "to": recipient,
+                "from_": TWILIO_PHONE_NUMBER,
+                "twiml": twiml_content.strip()
+            }
+            
+            if press_digits:
+                # SendDigits handles the menu navigation (e.g. 'wwww1')
+                # 'w' is a half-second pause
+                call_params["send_digits"] = press_digits
+            
+            call = client.calls.create(**call_params)
+            
+            return self._json_serialize({
+                "status": "Call initiated (Twilio LIVE)",
+                "call_sid": call.sid,
+                "recipient": recipient,
+                "script": script,
+                "press_digits": press_digits,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+        except Exception as e:
+            print(f"❌ Twilio Call Error: {str(e)}")
+            return self._json_serialize({
+                "status": "Call failed",
+                "error": str(e)
+            })
 
     def log_incident(self, zone_id: int, action: str, suppression_type: str, reasoning: str) -> str:
         """Log incident"""
@@ -418,7 +472,8 @@ class FireManagementAgent:
         elif tool_name == "initiate_emergency_call":
             return self.initiate_emergency_call(
                 script=tool_input.get("script"),
-                recipient=tool_input.get("recipient", os.getenv("YOUR_PERSONAL_PHONE", "DEMO_NUMBER"))
+                recipient=tool_input.get("recipient", os.getenv("EMERGENCY_RECIPIENT_PHONE", "DEMO_NUMBER")),
+                press_digits=tool_input.get("press_digits")
             )
         elif tool_name == "log_incident":
             return self.log_incident(
@@ -459,6 +514,8 @@ class FireManagementAgent:
 5. Log the incident with your reasoning
 6. Trigger 'send_emergency_email' ONLY if skip_email is False. (Current skip_email status: {skip_email})
 7. Generate a concise, urgent call script and trigger 'initiate_emergency_call'.
+    - If the recipient is 911 or an automated system, use 'press_digits' to navigate menus (e.g., 'wwww1' to wait 2 seconds and press 1).
+    - For general emergency contacts, no digits are needed.
 
 CRITICAL RULE:
 - You must send exactly ONE email and make exactly ONE call per detection. 
@@ -469,6 +526,7 @@ MANDATORY RULES:
 - Use 'send_emergency_email' as soon as fire is confirmed.
 - For 'severity', use 'CRITICAL' if segment area is > 1000 pixels, otherwise 'HIGH'.
 - The call script should still be natural and urgent.
+- If you need to navigate a menu, explain why you are using 'press_digits'.
 
 You have access to tools to query procedures, suppression info, the knowledge base, and communication channels.
 Always follow NFPA standards and zone-specific procedures.
@@ -499,6 +557,9 @@ Provide your analysis and decisions."""
         # Build tools list - EXCLUDE email tool if skip_email is True
         active_tools = [t for t in self.tools if not (skip_email and t["function"]["name"] == "send_emergency_email")]
 
+        iteration = 0
+        max_iterations = 8
+
         while iteration < max_iterations:
             iteration += 1
             print(f"\n🔄 Agent Iteration {iteration}:")
@@ -528,13 +589,17 @@ Provide your analysis and decisions."""
                     break
                 
                 response_data = response.json()
-                content = response_data["choices"][0]["message"].get("content", "")
-                tool_calls = response_data["choices"][0]["message"].get("tool_calls", [])
+                choice = response_data["choices"][0]["message"]
+                content = choice.get("content", "")
+                tool_calls = choice.get("tool_calls", [])
                 
                 # If agent provided content, print it
                 if content:
                     print(f"   Agent: {content[:200]}...")
                 
+                # Add assistant message to history (ONCE per turn)
+                messages.append(choice)
+
                 # If no tool calls, agent is done
                 if not tool_calls:
                     print(f"✅ Agent decision complete")
@@ -563,11 +628,6 @@ Provide your analysis and decisions."""
                     print(f"      Result: {tool_result[:100]}...")
                     
                     # Add tool result to messages
-                    messages.append({
-                        "role": "assistant",
-                        "content": content or "",
-                        "tool_calls": tool_calls
-                    })
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],

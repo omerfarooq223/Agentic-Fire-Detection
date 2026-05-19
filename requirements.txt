@@ -2,6 +2,8 @@
 fastapi>=0.110.0
 uvicorn>=0.27.0
 sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+greenlet>=3.0.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.9
 requests>=2.31.0
@@ -20,3 +22,4 @@ langchain>=0.1.0
 # Analysis & Utils
 pandas>=2.2.0
 watchdog>=4.0.0
+twilio>=9.0.0

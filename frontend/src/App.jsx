@@ -24,16 +24,32 @@ const BACKEND_URL = 'http://localhost:8000'
 // ── Utility Functions ──
 function nearestFrame(frames, t) {
   if (!frames?.length) return null
-  let best = frames[0]
-  let delta = Math.abs(frames[0].t - t)
-  for (let i = 1; i < frames.length; i++) {
-    const d = Math.abs(frames[i].t - t)
-    if (d < delta) {
-      delta = d
-      best = frames[i]
+  
+  let low = 0
+  let high = frames.length - 1
+  
+  // Binary search for the closest frame by timestamp 't'
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const midTime = frames[mid].t
+    
+    if (midTime === t) return frames[mid]
+    if (midTime < t) {
+      low = mid + 1
+    } else {
+      high = mid - 1
     }
   }
-  return best
+  
+  // After the loop, 'high' and 'low' are the two closest indices.
+  // We check which one is actually closer to 't'.
+  if (high < 0) return frames[0]
+  if (low >= frames.length) return frames[frames.length - 1]
+  
+  const d1 = Math.abs(frames[high].t - t)
+  const d2 = Math.abs(frames[low].t - t)
+  
+  return d1 < d2 ? frames[high] : frames[low]
 }
 
 
@@ -402,7 +418,7 @@ function TimelineChart({ timeline }) {
         <Flame size={16} /> Detection Timeline
       </h3>
       <div className="chart">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minHeight={240}>
           <AreaChart data={timeline}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="t" stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 11 }} />
