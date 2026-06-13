@@ -9,6 +9,8 @@ Fire Management Agentic System
 import os
 import requests
 import json
+import html
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
 from real_rag_system import RealRAGSystem
 from datetime import datetime
@@ -26,8 +28,7 @@ from typing import Any, Optional
 # Load API key from .env (never hard-code secrets!)
 load_dotenv()
 
-# Initialize REAL RAG (vector embeddings + FAISS)
-rag = RealRAGSystem()
+_shared_rag: Optional[RealRAGSystem] = None
 
 # ============= GROQ API SETUP =============
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # Loaded from .env
@@ -35,19 +36,28 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ============= EMAIL SETUP =============
 SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
-RECEIVER_EMAILS = os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",")
+RECEIVER_EMAILS = [email.strip() for email in os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",") if email.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
+ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
 
 # ============= TWILIO SETUP =============
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
+
+def get_shared_rag() -> RealRAGSystem:
+    """Load the vector RAG system only when the agent actually needs it."""
+    global _shared_rag
+    if _shared_rag is None:
+        _shared_rag = RealRAGSystem()
+    return _shared_rag
+
 class FireManagementAgent:
     def __init__(self, groq_api_key: str = None):
         # Use provided key, fall back to .env value
         self.groq_key = groq_api_key or GROQ_API_KEY
-        self.rag = rag
+        self.rag = get_shared_rag()
         self.incident_log = []
         
         # Define tools the agent can use
@@ -252,102 +262,188 @@ class FireManagementAgent:
     
     def build_emergency_html(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str, lat=None, lon=None) -> str:
         """Generate a premium Cyber HUD style HTML email"""
-        # Pin URL: Use Lat/Lon query format for high-visibility "Dropped Pin" + Directions button
+        safe_zone = html.escape(zone_name or "Unknown Zone")
+        safe_address = html.escape(address or "Unknown Location")
+        safe_severity = html.escape(severity or "HIGH")
+        safe_action = html.escape(action_taken or "Emergency response initiated")
+        safe_reasoning = html.escape(reasoning or "Fire or smoke detection requires immediate review.")
+
         if lat and lon:
             map_url = f"https://www.google.com/maps?q={lat},{lon}"
         else:
-            map_url = f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
+            map_url = f"https://www.google.com/maps/search/?api=1&query={quote_plus(address or 'Unknown Location')}"
+        safe_map_url = html.escape(map_url, quote=True)
 
         timestamp = datetime.now().strftime("%A, %B %d, %Y | %H:%M:%S")
-        score_color = "#e11d48" if severity == "CRITICAL" else "#f59e0b"
+        score_color = "#e11d48" if safe_severity == "CRITICAL" else "#f59e0b"
+        incident_id = f"FW-{datetime.now().strftime('%y%m%d%H%M')}"
         
         return f"""
         <!DOCTYPE html>
         <html>
-        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-        <body style="margin:0;padding:0;background:#0f172a;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f8fafc;">
-        <div style="max-width:600px;margin:20px auto;background:#1e293b;border-radius:16px;overflow:hidden;border:1px solid #334155;box-shadow:0 20px 50px rgba(0,0,0,0.5);">
-          
-          <div style="background:linear-gradient(135deg, #e11d48 0%, #9f1239 100%);padding:30px;text-align:center;">
-            <div style="font-size:12px;font-weight:800;letter-spacing:4px;color:rgba(255,255,255,0.7);text-transform:uppercase;margin-bottom:8px;">FireWatch AI Agent</div>
-            <div style="font-size:28px;font-weight:900;color:#ffffff;letter-spacing:-0.5px;">EMERGENCY DETECTED</div>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1.0">
+          <title>FireWatch AI Emergency Alert</title>
+        </head>
+        <body style="margin:0;padding:0;background:#eef2f7;font-family:Arial,Helvetica,sans-serif;color:#172033;">
+          <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+            FireWatch AI detected a {safe_severity} fire or smoke incident at {safe_zone}.
           </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;margin:0;padding:24px 12px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border:1px solid #d8e0ea;border-radius:14px;overflow:hidden;">
+                  <tr>
+                    <td style="background:#111827;padding:24px 28px 20px 28px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="vertical-align:top;">
+                            <div style="font-size:12px;line-height:16px;font-weight:700;letter-spacing:2px;color:#9ca3af;text-transform:uppercase;">FireWatch AI</div>
+                            <div style="font-size:26px;line-height:32px;font-weight:800;color:#ffffff;margin-top:6px;">Emergency Alert</div>
+                          </td>
+                          <td align="right" style="vertical-align:top;">
+                            <div style="display:inline-block;background:{score_color};color:#ffffff;font-size:12px;line-height:16px;font-weight:800;letter-spacing:1px;text-transform:uppercase;padding:8px 12px;border-radius:999px;">{safe_severity}</div>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
 
-          <div style="background:#0f172a;padding:12px 30px;border-bottom:1px solid #334155;">
-            <table width="100%">
-              <tr>
-                <td style="font-size:11px;font-weight:700;color:#94a3b8;">PRIORITY: <span style="color:{score_color}">{severity}</span></td>
-                <td style="font-size:11px;font-weight:700;color:#94a3b8;text-align:right;">ID: FW-{datetime.now().strftime('%y%m%d%H%M')}</td>
-              </tr>
-            </table>
-          </div>
+                  <tr>
+                    <td style="background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:14px 28px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="font-size:12px;line-height:18px;color:#64748b;">
+                            <strong style="color:#1f2937;">Incident ID:</strong> {incident_id}
+                          </td>
+                          <td align="right" style="font-size:12px;line-height:18px;color:#64748b;">
+                            <strong style="color:#1f2937;">Status:</strong> Active Response
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
 
-          <div style="padding:30px;">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="padding-bottom:25px;">
-                  <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">Location & Zone</div>
-                  <div style="font-size:18px;font-weight:700;color:#f1f5f9;">{zone_name}</div>
-                  <div style="font-size:14px;color:#94a3b8;margin-top:4px;margin-bottom:12px;">{address}</div>
-                  <a href="{map_url}" 
-                     style="display:inline-block;background:rgba(34, 211, 238, 0.1);color:#22d3ee;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:700;border:1px solid rgba(34, 211, 238, 0.3);">
-                    📍 Open in Maps
-                  </a>
-                </td>
-              </tr>
-              <tr>
-                <td style="background:rgba(225, 29, 72, 0.1);border-radius:12px;padding:20px;border:1px solid rgba(225, 29, 72, 0.2);">
-                  <div style="font-size:10px;font-weight:700;color:#e11d48;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;">Action Triggered</div>
-                  <div style="font-size:16px;font-weight:700;color:#f8fafc;">{action_taken}</div>
-                  <div style="font-size:13px;color:#cbd5e1;margin-top:8px;line-height:1.5;">{reasoning}</div>
-                </td>
-              </tr>
-            </table>
-          </div>
+                  <tr>
+                    <td style="padding:28px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="padding:0 0 18px 0;">
+                            <div style="font-size:11px;line-height:14px;font-weight:800;letter-spacing:1.4px;color:#64748b;text-transform:uppercase;">Location</div>
+                            <div style="font-size:22px;line-height:28px;font-weight:800;color:#111827;margin-top:6px;">{safe_zone}</div>
+                            <div style="font-size:14px;line-height:21px;color:#475569;margin-top:6px;">{safe_address}</div>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding:0 0 24px 0;">
+                            <a href="{safe_map_url}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;font-size:13px;line-height:18px;font-weight:800;padding:11px 16px;border-radius:8px;">Open Location in Maps</a>
+                          </td>
+                        </tr>
+                      </table>
 
-          <div style="padding:0 30px 30px;">
-            <div style="background:#0f172a;border-radius:12px;padding:20px;">
-              <table width="100%">
-                <tr>
-                  <td>
-                    <div style="font-size:10px;color:#64748b;text-transform:uppercase;">Time Detected</div>
-                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-top:4px;">{timestamp}</div>
-                  </td>
-                  <td style="text-align:right;">
-                    <div style="font-size:10px;color:#64748b;text-transform:uppercase;">Status</div>
-                    <div style="font-size:13px;font-weight:600;color:#22d3ee;margin-top:4px;">Active Response</div>
-                  </td>
-                </tr>
-              </table>
-            </div>
-          </div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #fecdd3;border-left:5px solid #e11d48;background:#fff5f6;border-radius:10px;">
+                        <tr>
+                          <td style="padding:18px 18px 16px 18px;">
+                            <div style="font-size:11px;line-height:14px;font-weight:800;letter-spacing:1.4px;color:#be123c;text-transform:uppercase;">Action Triggered</div>
+                            <div style="font-size:17px;line-height:24px;font-weight:800;color:#111827;margin-top:8px;">{safe_action}</div>
+                            <div style="font-size:14px;line-height:22px;color:#4b5563;margin-top:8px;">{safe_reasoning}</div>
+                          </td>
+                        </tr>
+                      </table>
 
-          <div style="padding:0 30px 30px;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Immediate Safety Protocol</div>
-            <div style="background:#e11d48;color:#ffffff;padding:15px;border-radius:8px;text-align:center;font-weight:800;font-size:14px;">
-              ⚠️ EVACUATE THE AREA IMMEDIATELY
-            </div>
-            <div style="font-size:12px;color:#94a3b8;margin-top:12px;text-align:center;line-height:1.5;">
-              Proceed to the nearest assembly point. Do not use elevators. Ensure all personnel are accounted for.
-            </div>
-          </div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px;">
+                        <tr>
+                          <td width="50%" style="padding:16px 18px;border-right:1px solid #e2e8f0;">
+                            <div style="font-size:11px;line-height:14px;font-weight:800;letter-spacing:1px;color:#64748b;text-transform:uppercase;">Detected At</div>
+                            <div style="font-size:14px;line-height:21px;font-weight:700;color:#111827;margin-top:6px;">{timestamp}</div>
+                          </td>
+                          <td width="50%" style="padding:16px 18px;">
+                            <div style="font-size:11px;line-height:14px;font-weight:800;letter-spacing:1px;color:#64748b;text-transform:uppercase;">Recommended Priority</div>
+                            <div style="font-size:14px;line-height:21px;font-weight:800;color:{score_color};margin-top:6px;">Immediate Review</div>
+                          </td>
+                        </tr>
+                      </table>
 
-          <div style="background:#0f172a;padding:20px;text-align:center;border-top:1px solid #334155;">
-            <a href="https://github.com/omerfarooq223/Agentic-Fire-Detection" style="color:#22d3ee;text-decoration:none;font-size:11px;font-weight:700;">Open FireWatch Dashboard →</a>
-            <div style="font-size:10px;color:#475569;margin-top:10px;">FireWatch AI  |  Secure Intelligence  |  {datetime.now().year}</div>
-          </div>
-        </div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;background:#111827;border-radius:10px;">
+                        <tr>
+                          <td style="padding:20px;">
+                            <div style="font-size:12px;line-height:16px;font-weight:800;letter-spacing:1.4px;color:#fca5a5;text-transform:uppercase;">Immediate Safety Protocol</div>
+                            <div style="font-size:18px;line-height:25px;font-weight:800;color:#ffffff;margin-top:8px;">Evacuate the affected area immediately.</div>
+                            <div style="font-size:14px;line-height:22px;color:#cbd5e1;margin-top:8px;">
+                              Proceed to the nearest assembly point. Do not use elevators. Account for personnel and keep access clear for responders.
+                            </div>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 28px;text-align:center;">
+                      <a href="https://github.com/omerfarooq223/Agentic-Fire-Detection" style="color:#0f766e;text-decoration:none;font-size:13px;line-height:18px;font-weight:800;">Open FireWatch Dashboard</a>
+                      <div style="font-size:11px;line-height:16px;color:#94a3b8;margin-top:8px;">FireWatch AI | Secure Incident Intelligence | {datetime.now().year}</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </body>
         </html>
         """
+
+    def record_demo_alert(
+        self,
+        channel: str,
+        zone_name: str,
+        address: str,
+        severity: str,
+        action_taken: str,
+        reasoning: str = "",
+        lat=None,
+        lon=None,
+    ) -> str:
+        """Record a demo-mode alert instead of sending through a paid provider."""
+        alert = {
+            "status": "Demo alert prepared",
+            "channel": channel,
+            "zone_name": zone_name,
+            "address": address,
+            "severity": severity,
+            "action_taken": action_taken,
+            "reasoning": reasoning,
+            "lat": lat,
+            "lon": lon,
+            "timestamp": datetime.utcnow().isoformat(),
+            "note": "Set AUTO_ALERTS_ENABLED=true and ALERT_MODE=email or email_and_call for live dispatch.",
+        }
+        self.incident_log.append(alert)
+        print(f"\n🧪 DEMO ALERT PREPARED: {channel} | {zone_name} | {severity}")
+        return self._json_serialize(alert)
 
     def send_emergency_email(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str = "", lat=None, lon=None) -> str:
         """Send emergency email via official Gmail API using a premium HTML template"""
         print(f"📧 Sending Emergency Alert Email for {zone_name}...")
         print(f"📍 GPS Pinpoint Data: Lat={lat}, Lon={lon}")
+
+        if ALERT_MODE == "demo":
+            return self.record_demo_alert(
+                channel="email",
+                zone_name=zone_name,
+                address=address,
+                severity=severity,
+                action_taken=action_taken,
+                reasoning=reasoning,
+                lat=lat,
+                lon=lon,
+            )
         
         if not os.path.exists('token.json'):
             return self._json_serialize({"error": "token.json not found."})
+
+        if not RECEIVER_EMAILS:
+            return self._json_serialize({"error": "REMINDER_EMAIL_RECEIVERS is empty."})
         
         subject = f"🚨 EMERGENCY FIRE ALERT: {zone_name} ({severity})"
         html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning, lat=lat, lon=lon)
@@ -376,10 +472,32 @@ class FireManagementAgent:
         if press_digits:
             print(f"   MENU NAVIGATION: Pressing '{press_digits}'")
 
+        if ALERT_MODE == "demo":
+            return self.record_demo_alert(
+                channel="voice",
+                zone_name="Emergency Contact",
+                address=recipient or "No recipient configured",
+                severity="CRITICAL",
+                action_taken="VOICE CALL SCRIPT PREPARED",
+                reasoning=script,
+            )
+
         if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
+            return self.record_demo_alert(
+                channel="voice",
+                zone_name="Emergency Contact",
+                address=recipient or "No recipient configured",
+                severity="CRITICAL",
+                action_taken="VOICE CALL SCRIPT PREPARED",
+                reasoning=(
+                    f"{script}\n\nTwilio credentials are missing, so this was kept as a demo alert."
+                ),
+            )
+
+        if not recipient:
             return self._json_serialize({
-                "status": "Call failed (Twilio credentials missing)",
-                "error": "Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER in .env"
+                "status": "Call failed",
+                "error": "EMERGENCY_RECIPIENT_PHONE is empty."
             })
 
         try:
@@ -505,6 +623,7 @@ class FireManagementAgent:
         
         # Build context for the agent
         skip_email = detection_data.get("skip_email", False)
+        skip_call = detection_data.get("skip_call", ALERT_MODE == "email")
         
         system_prompt = f"""You are a fire management AI agent. You receive fire detection alerts and must:
 1. Query the safety procedures for the detected zone
@@ -513,9 +632,9 @@ class FireManagementAgent:
 4. Decide on appropriate suppression system activation
 5. Log the incident with your reasoning
 6. Trigger 'send_emergency_email' ONLY if skip_email is False. (Current skip_email status: {skip_email})
-7. Generate a concise, urgent call script and trigger 'initiate_emergency_call'.
-    - If the recipient is 911 or an automated system, use 'press_digits' to navigate menus (e.g., 'wwww1' to wait 2 seconds and press 1).
-    - For general emergency contacts, no digits are needed.
+7. Generate a concise, urgent call script and trigger 'initiate_emergency_call' for the configured emergency contact ONLY if skip_call is False. (Current skip_call status: {skip_call})
+    - If the configured contact uses an automated phone menu, use 'press_digits' to navigate menus (e.g., 'wwww1' to wait 2 seconds and press 1).
+    - For direct emergency contacts, no digits are needed.
 
 CRITICAL RULE:
 - You must send exactly ONE email and make exactly ONE call per detection. 
@@ -554,8 +673,12 @@ Provide your analysis and decisions."""
             {"role": "user", "content": user_message}
         ]
         
-        # Build tools list - EXCLUDE email tool if skip_email is True
-        active_tools = [t for t in self.tools if not (skip_email and t["function"]["name"] == "send_emergency_email")]
+        # Build tools list according to configured alert mode.
+        active_tools = [
+            t for t in self.tools
+            if not (skip_email and t["function"]["name"] == "send_emergency_email")
+            and not (skip_call and t["function"]["name"] == "initiate_emergency_call")
+        ]
 
         iteration = 0
         max_iterations = 8

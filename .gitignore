@@ -16,6 +16,10 @@ fire_seg_final_results.zip
 # Python/Environment
 __pycache__/
 .venv/
+.venv.nosync/
+.venv.nosync
+frontend/.venv.nosync/
+frontend/.venv.nosync
 .env.local
 .DS_Store
 
@@ -56,6 +60,8 @@ __pycache__/
 *.avi
 _archive/
 local_backup/
+local_backup.nosync/
+local_backup.nosync
 New Folder With Items/
 
 # Output directories

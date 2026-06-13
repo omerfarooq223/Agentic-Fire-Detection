@@ -16,7 +16,7 @@ FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed 
 
 ### 1. Hybrid Emergency Response (0-Latency)
 The system utilizes a dual-engine response architecture for maximum speed and intelligence:
-- **Direct Response (Speed):** A pure Python engine dispatches the first critical email alert the **millisecond** a fire is detected.
+- **Confirmed Response (Safety):** A pure Python engine prepares or dispatches alerts after configurable multi-frame confirmation and cooldown checks.
 - **Agentic Coordination (Intelligence):** A Llama 3.3-powered agent performs post-incident reasoning and RAG procedure lookups.
 - **Precision GPS Pinpointing:** Integrates browser-level Geolocation APIs to capture **exact GPS coordinates** for "One-Click Rescue" navigation.
 
@@ -115,7 +115,9 @@ FireWatch AI is built on a modular, asynchronous architecture designed for high 
 - **RAG System:** A FAISS vector database containing specialized fire safety procedures.
 
 ### 4. Communication Layer
-- **Gmail API:** Secure OAuth2-based email dispatching using premium HTML templates.
+- **Demo-safe Alerts:** Default mode prepares alerts without contacting real people.
+- **Gmail API:** Optional OAuth2-based email dispatching using premium HTML templates.
+- **Twilio Voice:** Optional voice calls when a live Twilio account is available.
 - **Geolocation:** High-accuracy browser-based GPS capturing for pinpoint rescue.
 
 ---
@@ -133,10 +135,19 @@ GROQ_API_KEY=your_key_here
 FIRE_DETECT_MODEL=./models/best.pt
 REMINDER_EMAIL_SENDER=your_gmail@gmail.com
 REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com
+ALERT_MODE=demo
+AUTO_ALERTS_ENABLED=false
+ALERT_CONFIRMATION_FRAMES=3
+ALERT_COOLDOWN_SECONDS=300
 ```
 
 ### 3) Gmail API Authentication
 Place `credentials.json` in the root directory and run the system once to authorize and generate `token.json`.
+
+### 4) Alerting and Twilio
+Twilio is optional. The project works in `ALERT_MODE=demo` without a Twilio account and records prepared call/email payloads for demonstration. For live email alerts, use `ALERT_MODE=email` and set `AUTO_ALERTS_ENABLED=true`. For live calls, use `ALERT_MODE=email_and_call` only after configuring verified Twilio numbers.
+
+See [docs/ALERTING.md](./docs/ALERTING.md) for the alerting modes, Twilio limitations, and safety guards.
 
 ---
 

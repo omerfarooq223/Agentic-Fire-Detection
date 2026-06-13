@@ -601,7 +601,7 @@ body {
   animation: scanningBeam 4s linear infinite;
 }
 
-.credit-footer span {
+.credit-footer a {
   position: relative;
   color: white;
   font-weight: 800;
@@ -612,10 +612,11 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-  cursor: default;
+  cursor: pointer;
+  text-decoration: none;
 }
 
-.credit-footer span:hover {
+.credit-footer a:hover {
   color: var(--accent-cyan);
   border-color: var(--accent-cyan);
   background: rgba(0, 217, 255, 0.05);

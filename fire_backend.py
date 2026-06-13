@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import os
 import shutil
+import time
 import zipfile
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -37,6 +38,18 @@ from dotenv import load_dotenv
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
+AUTO_ALERTS_ENABLED = os.getenv("AUTO_ALERTS_ENABLED", "false").strip().lower() == "true"
+ALERT_CONFIRMATION_FRAMES = max(1, int(os.getenv("ALERT_CONFIRMATION_FRAMES", "3")))
+ALERT_COOLDOWN_SECONDS = max(0, int(os.getenv("ALERT_COOLDOWN_SECONDS", "300")))
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    ).split(",")
+    if origin.strip()
+]
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SEG_RESULTS_ZIP = PROJECT_ROOT / "fire_seg_final_results.zip"
@@ -48,6 +61,7 @@ _yolo_seg: Any = None
 _yolo_det_checked = False
 _rag_system: Optional[Any] = None
 _fire_agent: Optional[FireManagementAgent] = None
+_last_alert_at_by_zone: dict[int, float] = {}
 
 def generate_rag_answer(query: str, retrieved_docs: list, groq_key: str = None) -> str:
     """
@@ -252,10 +266,10 @@ app = FastAPI(title="Fire Management System", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Serve detection images
@@ -280,7 +294,7 @@ async def startup():
     twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
     twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
     if not all([twilio_sid, twilio_token, twilio_phone]):
-        print("⚠️  WARNING: Twilio credentials missing in .env. Emergency calls will be disabled.")
+        print("ℹ️  Twilio credentials missing. Voice calls will use demo mode unless ALERT_MODE=email_and_call is fully configured.")
     else:
         print("✅ Twilio Voice credentials detected.")
     
@@ -456,8 +470,12 @@ def get_fire_agent() -> FireManagementAgent:
 
 def get_device_location(lat: float = None, lon: float = None) -> str:
     """Detect the physical address of the current device via GPS or IP Geolocation"""
+    return resolve_device_location(lat=lat, lon=lon)["address"]
+
+
+def resolve_device_location(lat: float = None, lon: float = None) -> dict:
+    """Resolve coordinates and a readable address without leaking local variables to callers."""
     try:
-        # 1. Use provided GPS coordinates if available, otherwise fallback to IP
         if lat is None or lon is None:
             geo_res = requests.get("http://ip-api.com/json/", timeout=3).json()
             if geo_res.get("status") == "success":
@@ -475,13 +493,75 @@ def get_device_location(lat: float = None, lon: float = None) -> str:
             
             address = rev_res.get("display_name")
             if address:
-                return address
-            return f"Lat: {lat}, Lon: {lon}"
+                return {"address": address, "lat": lat, "lon": lon}
+            return {"address": f"Lat: {lat}, Lon: {lon}", "lat": lat, "lon": lon}
             
     except Exception as e:
         print(f"Location detection failed: {e}")
     
-    return "Unknown Live Location"
+    return {"address": "Unknown Live Location", "lat": lat, "lon": lon}
+
+
+def should_dispatch_alert(zone_id: int) -> tuple[bool, str]:
+    """Rate-limit outbound emergency notifications per zone."""
+    if not AUTO_ALERTS_ENABLED:
+        return False, "automatic alerts disabled"
+
+    now = time.monotonic()
+    last = _last_alert_at_by_zone.get(zone_id)
+    if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
+        remaining = int(ALERT_COOLDOWN_SECONDS - (now - last))
+        return False, f"cooldown active for {remaining}s"
+
+    _last_alert_at_by_zone[zone_id] = now
+    return True, "dispatch allowed"
+
+
+def dispatch_confirmed_alert(
+    background_tasks: BackgroundTasks,
+    agent: FireManagementAgent,
+    zone_name: str,
+    address: str,
+    lat: float = None,
+    lon: float = None,
+) -> None:
+    """Send the configured alert type after detection confirmation."""
+    reasoning = (
+        f"Fire/smoke confirmed across {ALERT_CONFIRMATION_FRAMES} sampled frame(s). "
+        "Location data attached when available."
+    )
+
+    if ALERT_MODE in {"email", "email_and_call"}:
+        background_tasks.add_task(
+            agent.send_emergency_email,
+            zone_name=zone_name,
+            address=address,
+            severity="CRITICAL",
+            action_taken="CONFIRMED ALERT DISPATCHED",
+            reasoning=reasoning,
+            lat=lat,
+            lon=lon,
+        )
+    else:
+        background_tasks.add_task(
+            agent.record_demo_alert,
+            channel="email",
+            zone_name=zone_name,
+            address=address,
+            severity="CRITICAL",
+            action_taken="CONFIRMED ALERT PREPARED",
+            reasoning=reasoning,
+            lat=lat,
+            lon=lon,
+        )
+
+    if ALERT_MODE == "email_and_call":
+        script = f"FireWatch AI emergency alert. Fire or smoke is confirmed at {zone_name}, {address}. Please respond immediately."
+        background_tasks.add_task(
+            agent.initiate_emergency_call,
+            script=script,
+            recipient=os.getenv("EMERGENCY_RECIPIENT_PHONE", ""),
+        )
 
 
 def _boxes_from_result(result, im_w: int, im_h: int) -> list:
@@ -825,7 +905,8 @@ async def log_detection(
         agent = get_fire_agent()
         
         # DYNAMIC LOCATION: Use live device location if possible
-        live_address = get_device_location()
+        live_location = resolve_device_location()
+        live_address = live_location["address"]
         result = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
         zone = result.scalars().first()
         # Fallback to DB if live detection fails
@@ -834,11 +915,13 @@ async def log_detection(
         agent_data = {
             "zone_id": zone_id,
             "address": final_address,
-            "lat": geo_res.get("lat") if "Unknown" not in live_address else None,
-            "lon": geo_res.get("lon") if "Unknown" not in live_address else None,
+            "lat": live_location.get("lat") if "Unknown" not in live_address else None,
+            "lon": live_location.get("lon") if "Unknown" not in live_address else None,
             "coordinates": {"x": coordinates_x, "y": coordinates_y},
             "segment_area_pixels": segment_area_pixels,
-            "detection_id": db_detection.detection_id
+            "detection_id": db_detection.detection_id,
+            "skip_email": not AUTO_ALERTS_ENABLED,
+            "skip_call": not AUTO_ALERTS_ENABLED or ALERT_MODE == "email",
         }
         background_tasks.add_task(agent.reason, agent_data)
         
@@ -1072,38 +1155,38 @@ async def analyze_uploaded_video(
             if y["fire"] or y.get("smoke"):
                 positive_frames += 1
                 
-                # PURE CODE TRIGGER: Instant, 100% Reliable Emergency Alert
-                if positive_frames == 1:
-                    # 1. Get location data
-                    live_address = get_device_location(lat=lat, lon=lon)
+                if positive_frames == ALERT_CONFIRMATION_FRAMES:
+                    live_location = resolve_device_location(lat=lat, lon=lon)
+                    live_address = live_location["address"]
                     zone_res = await db.execute(select(Zone).filter(Zone.zone_id == zone_id))
                     zone = zone_res.scalars().first()
                     final_address = live_address if "Unknown" not in live_address else (zone.location_address if zone else "Unknown")
                     zone_name = zone.name if zone else f"Zone {zone_id}"
                     
-                    # 2. INSTANT ALERT (No AI waiting)
                     agent = get_fire_agent()
-                    background_tasks.add_task(
-                        agent.send_emergency_email,
-                        zone_name=zone_name,
-                        address=final_address,
-                        severity="CRITICAL",
-                        action_taken="AUTOMATIC ALERT DISPATCHED",
-                        reasoning="Pure code trigger: Fire detected with high confidence. GPS location verified.",
-                        lat=lat,
-                        lon=lon
-                    )
+                    can_dispatch, dispatch_reason = should_dispatch_alert(zone_id)
+                    if can_dispatch:
+                        dispatch_confirmed_alert(
+                            background_tasks=background_tasks,
+                            agent=agent,
+                            zone_name=zone_name,
+                            address=final_address,
+                            lat=live_location.get("lat"),
+                            lon=live_location.get("lon"),
+                        )
+                    else:
+                        print(f"Alert not dispatched for zone {zone_id}: {dispatch_reason}")
                     
-                    # 3. AI ANALYSIS (Runs in background for logging & RAG)
                     agent_data = {
                         "zone_id": zone_id,
                         "address": final_address,
-                        "lat": lat,
-                        "lon": lon,
+                        "lat": live_location.get("lat"),
+                        "lon": live_location.get("lon"),
                         "coordinates": y.get("bbox") or {"x": 0.5, "y": 0.5},
                         "segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
-                        "is_immediate_alert": True,
-                        "skip_email": True  # Tell AI we already sent the alert
+                        "is_confirmed_alert": True,
+                        "skip_email": True,
+                        "skip_call": True,
                     }
                     background_tasks.add_task(agent.reason, agent_data)
 
@@ -1425,7 +1508,17 @@ def rag_query(payload: RAGQueryRequest):
 # ============= HEALTH CHECK =============
 @app.get("/api/health")
 def health_check():
-    return {"status": "Backend is running", "db": "Connected"}
+    return {
+        "status": "Backend is running",
+        "db": "Connected",
+        "alerts": {
+            "mode": ALERT_MODE,
+            "auto_enabled": AUTO_ALERTS_ENABLED,
+            "confirmation_frames": ALERT_CONFIRMATION_FRAMES,
+            "cooldown_seconds": ALERT_COOLDOWN_SECONDS,
+        },
+        "cors_origins": CORS_ORIGINS,
+    }
 
 
 if __name__ == "__main__":

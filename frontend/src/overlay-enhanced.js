@@ -61,9 +61,8 @@ class DetectionOverlay {
       const w = b.w * vw
       const h = b.h * vh
 
-      // Subtle pulsing effect for smoke
-      const pulse = Math.sin(this.animationFrame * 0.03 + idx * 0.5) * 0.15 + 0.85
-      const alpha = 0.25 * pulse
+      const pulse = Math.sin(this.animationFrame * 0.025 + idx * 0.5) * 0.08 + 0.92
+      const alpha = 0.18 * pulse
 
       // Smoke gradient (cool blues/purples)
       const gradient = ctx.createLinearGradient(x, y, x, y + h)
@@ -71,16 +70,14 @@ class DetectionOverlay {
       gradient.addColorStop(0.5, `rgba(139, 92, 246, ${alpha * 0.4})`)
       gradient.addColorStop(1, `rgba(99, 102, 241, ${alpha * 0.3})`)
 
-      // Draw rounded rectangle with gradient
       this.drawRoundedRect(ctx, x, y, w, h, 8)
       ctx.fillStyle = gradient
       ctx.fill()
 
-      // Animated dashed border
-      ctx.strokeStyle = `rgba(129, 140, 248, ${0.7 * pulse})`
+      ctx.strokeStyle = `rgba(165, 180, 252, ${0.85 * pulse})`
       ctx.lineWidth = 2
-      ctx.setLineDash([8, 6])
-      ctx.lineDashOffset = -(this.animationFrame * 0.5)
+      ctx.setLineDash([10, 7])
+      ctx.lineDashOffset = -(this.animationFrame * 0.25)
       ctx.stroke()
       ctx.setLineDash([])
     })
@@ -129,20 +126,6 @@ class DetectionOverlay {
 
       const color = this.getHeatColor(intensity)
 
-      // Multi-layer glow effect
-      for (let i = 3; i >= 1; i--) {
-        ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${(0.2 / i) * intensity})`
-        ctx.lineWidth = i * 2.5
-        ctx.beginPath()
-        ctx.moveTo(poly[0].x * vw, poly[0].y * vh)
-        for (let j = 1; j < poly.length; j++) {
-          ctx.lineTo(poly[j].x * vw, poly[j].y * vh)
-        }
-        ctx.closePath()
-        ctx.stroke()
-      }
-
-      // Main fill with gradient
       const bounds = this.getPolyBounds(poly, vw, vh)
       const gradient = ctx.createRadialGradient(
         bounds.cx,
@@ -165,10 +148,12 @@ class DetectionOverlay {
       ctx.closePath()
       ctx.fill()
 
-      // Bright outline
-      ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.95})`
-      ctx.lineWidth = 2.5
+      ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.28 * intensity})`
+      ctx.shadowBlur = 8
+      ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.95)`
+      ctx.lineWidth = 2
       ctx.stroke()
+      ctx.shadowBlur = 0
     })
   }
 
@@ -193,39 +178,24 @@ class DetectionOverlay {
   renderFireBox(ctx, x, y, w, h, intensity) {
     const color = this.getHeatColor(intensity)
 
-    // Animated pulsing effect
-    const pulse = Math.sin(this.animationFrame * 0.05) * 0.2 + 0.8
+    const pulse = Math.sin(this.animationFrame * 0.035) * 0.08 + 0.92
 
-    // Outer glow layers
-    for (let i = 4; i >= 1; i--) {
-      ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${(0.6 / i) * intensity})`
-      ctx.shadowBlur = i * 4
-      ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${(0.15 / i) * pulse * intensity})`
-      ctx.lineWidth = i * 1.5
-      this.drawRoundedRect(ctx, x - i, y - i, w + i * 2, h + i * 2, 6)
-      ctx.stroke()
-    }
-
-    // Main gradient fill
     const gradient = ctx.createLinearGradient(x, y, x, y + h)
-    gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.25 * intensity})`)
-    gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.1 * intensity})`)
+    gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.18 * intensity})`)
+    gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.08 * intensity})`)
 
     ctx.fillStyle = gradient
-    ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, 0.5)`
-    ctx.shadowBlur = 15
     this.drawRoundedRect(ctx, x, y, w, h, 6)
     ctx.fill()
 
-    // Bright animated border
-    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.9 * pulse})`
-    ctx.lineWidth = 3
-    ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, 0.8)`
-    ctx.shadowBlur = 12
+    ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.25 * intensity})`
+    ctx.shadowBlur = 8
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${0.95 * pulse})`
+    ctx.lineWidth = 2
     this.drawRoundedRect(ctx, x, y, w, h, 6)
     ctx.stroke()
+    ctx.shadowBlur = 0
 
-    // Corner accents (tactical look)
     this.drawCornerAccents(ctx, x, y, w, h, color, intensity * pulse)
   }
 
@@ -323,87 +293,74 @@ class DetectionOverlay {
   renderLabels(ctx, vw, vh, frame) {
     const labels = []
 
-    // Fire label
     if (frame.fire) {
       const fireArea = Number(frame.fire_segment_area_pixels || 0)
       const intensity = Math.min(fireArea / 120000, 1)
+      const anchor = this.getFireAnchor(frame, vw, vh) || { x: 24, y: 24 }
 
       labels.push({
-        text: `🔥 FIRE DETECTED`,
-        subtext: `Area: ${Math.round(fireArea)} px`,
-        x: 20,
-        y: 40,
+        title: 'FIRE',
+        value: `${Math.round(fireArea).toLocaleString()} px`,
+        x: anchor.x,
+        y: anchor.y,
         color: this.getHeatColor(intensity),
       })
     }
 
-    // Smoke label
     if (frame.smoke) {
+      const anchor = this.getSmokeAnchor(frame, vw, vh) || { x: 24, y: frame.fire ? 76 : 24 }
       labels.push({
-        text: `💨 SMOKE DETECTED`,
-        subtext: 'Smoke zones identified',
-        x: 20,
-        y: frame.fire ? 105 : 40,
+        title: 'SMOKE',
+        value: 'zone identified',
+        x: anchor.x,
+        y: anchor.y,
         color: { r: 129, g: 140, b: 248 },
       })
     }
 
-
-    // Draw labels
     labels.forEach((label) => {
-      this.drawLabel(ctx, label)
+      this.drawLabel(ctx, label, vw, vh)
     })
   }
 
   /**
    * Draw a styled label with background and shadow
    */
-  drawLabel(ctx, label) {
+  drawLabel(ctx, label, vw, vh) {
     const color = label.color
+    const title = label.title || ''
+    const value = label.value || ''
 
-    // Label background - measure main text and add extra width for subtext
-    ctx.font = 'bold 15px Inter, system-ui, sans-serif'
-    const mainTextWidth = ctx.measureText(label.text).width
-    const padding = 18
-    let bgW = mainTextWidth + padding * 2 + 20
-    
-    // If there's subtext, ensure box is wide enough
-    if (label.subtext) {
-      ctx.font = '12px Inter, system-ui, sans-serif'
-      const subtextWidth = ctx.measureText(label.subtext).width
-      bgW = Math.max(bgW, subtextWidth + padding * 2 + 20)
-    }
+    ctx.font = '800 12px Inter, system-ui, sans-serif'
+    const titleWidth = ctx.measureText(title).width
+    ctx.font = '600 11px Inter, system-ui, sans-serif'
+    const valueWidth = ctx.measureText(value).width
 
-    const bgX = label.x - padding
-    const bgY = label.y - 28
-    const bgH = label.subtext ? 64 : 40
+    const paddingX = 12
+    const bgW = Math.max(92, titleWidth + valueWidth + paddingX * 2 + 18)
+    const bgH = 34
+    const bgX = Math.min(Math.max(label.x, 10), Math.max(10, vw - bgW - 10))
+    const bgY = Math.min(Math.max(label.y - bgH - 8, 10), Math.max(10, vh - bgH - 10))
 
-    // Glow background
-    ctx.shadowColor = `rgba(${color.r}, ${color.g}, ${color.b}, 0.5)`
-    ctx.shadowBlur = 12
-    ctx.fillStyle = `rgba(10, 14, 26, 0.9)`
-    this.drawRoundedRect(ctx, bgX, bgY, bgW, bgH, 8)
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
+    ctx.shadowBlur = 8
+    ctx.fillStyle = 'rgba(7, 12, 22, 0.86)'
+    this.drawRoundedRect(ctx, bgX, bgY, bgW, bgH, 7)
     ctx.fill()
 
-    // Border
-    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.7)`
-    ctx.lineWidth = 1.5
-    this.drawRoundedRect(ctx, bgX, bgY, bgW, bgH, 8)
+    ctx.shadowBlur = 0
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.9)`
+    ctx.lineWidth = 1
+    this.drawRoundedRect(ctx, bgX, bgY, bgW, bgH, 7)
     ctx.stroke()
 
-    // Main text
-    ctx.shadowColor = 'transparent'
     ctx.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`
-    ctx.font = 'bold 15px Inter, system-ui, sans-serif'
-    ctx.fillText(label.text, label.x, label.y)
+    ctx.font = '800 12px Inter, system-ui, sans-serif'
+    ctx.fillText(title, bgX + paddingX, bgY + 21)
 
-    // Sub text
-    if (label.subtext) {
-      ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.7)`
-      ctx.font = '12px Inter, system-ui, sans-serif'
-      ctx.fillText(label.subtext, label.x, label.y + 20)
-    }
-
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.9)'
+    ctx.font = '600 11px Inter, system-ui, sans-serif'
+    ctx.fillText(value, bgX + paddingX + titleWidth + 14, bgY + 21)
   }
 
   /**
@@ -498,10 +455,38 @@ class DetectionOverlay {
     })
 
     return {
+      x: minX,
+      y: minY,
       cx: (minX + maxX) / 2,
       cy: (minY + maxY) / 2,
       w: maxX - minX,
       h: maxY - minY,
+    }
+  }
+
+  getFireAnchor(frame, vw, vh) {
+    const masks = frame.fire_masks || []
+    if (masks.length) {
+      const bounds = this.getPolyBounds(masks[0], vw, vh)
+      return { x: bounds.x, y: bounds.y }
+    }
+
+    const box = frame.fire_boxes?.[0]?.bbox || frame.bbox
+    if (!box) return null
+
+    return {
+      x: (box.x - box.w / 2) * vw,
+      y: (box.y - box.h / 2) * vh,
+    }
+  }
+
+  getSmokeAnchor(frame, vw, vh) {
+    const box = frame.smoke_boxes?.[0]?.bbox
+    if (!box) return null
+
+    return {
+      x: (box.x - box.w / 2) * vw,
+      y: (box.y - box.h / 2) * vh,
     }
   }
 
@@ -517,24 +502,24 @@ class DetectionOverlay {
     const alpha = Math.sin(this.animationFrame * 0.05) * 0.2 + 0.4
     
     // Top-right status
-    ctx.font = 'bold 10px monospace'
+    ctx.font = '600 10px Inter, system-ui, sans-serif'
     ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`
     ctx.textAlign = 'right'
-    ctx.fillText('SYSTEM_ACTIVE // SCANNING_FEED...', vw - 20, 30)
+    ctx.fillText('SCANNING FEED', vw - 20, 28)
     
     // Reticle in center
     const cx = vw / 2
     const cy = vh / 2
-    const size = 30
-    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha * 0.5})`
+    const size = 24
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha * 0.28})`
     ctx.lineWidth = 1
     
     ctx.beginPath(); ctx.moveTo(cx - size, cy); ctx.lineTo(cx + size, cy); ctx.stroke()
     ctx.beginPath(); ctx.moveTo(cx, cy - size); ctx.lineTo(cx, cy + size); ctx.stroke()
     
     // Scanline
-    const scanY = (this.animationFrame * 2) % vh
-    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.1)`
+    const scanY = (this.animationFrame * 1.2) % vh
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.06)`
     ctx.beginPath(); ctx.moveTo(0, scanY); ctx.lineTo(vw, scanY); ctx.stroke()
     
     ctx.restore()

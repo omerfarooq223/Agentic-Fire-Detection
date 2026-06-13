@@ -19,7 +19,7 @@ import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAx
 import DetectionOverlay from './overlay-enhanced'
 import './index.css'
 
-const BACKEND_URL = 'http://localhost:8000'
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 // ── Utility Functions ──
 function nearestFrame(frames, t) {
@@ -67,13 +67,18 @@ function BrandHeader() {
 function CreditFooter() {
   return (
     <footer className="credit-footer">
-      Designed & Developed by <span>Muhammad Umar Farooq</span>
+      Designed & Developed by{' '}
+      <a href="https://omerfarooq223.github.io" target="_blank" rel="noreferrer">
+        Muhammad Umar Farooq
+      </a>
     </footer>
   )
 }
 
-function StatusBar({ online, metrics, level }) {
+function StatusBar({ online, metrics, level, alertConfig }) {
   const isHighRisk = metrics.risk >= 40
+  const alertMode = alertConfig?.mode || 'demo'
+  const alertEnabled = Boolean(alertConfig?.auto_enabled)
 
   return (
     <header className="hud-top">
@@ -97,6 +102,10 @@ function StatusBar({ online, metrics, level }) {
       <div className={`chip level ${level} ${level === 'critical' ? 'alert-system' : ''}`}>
         <span>Alert Level</span>
         <strong>{level.toUpperCase()}</strong>
+      </div>
+      <div className={`chip ${alertEnabled ? 'danger' : ''}`}>
+        <span>Alert Mode</span>
+        <strong>{alertMode.toUpperCase()}</strong>
       </div>
     </header>
   )
@@ -309,13 +318,13 @@ function FloatingChat({ isOpen, setOpen, isFull, setFull, online, chatHistory, r
 function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
   const getStatusText = (kind, state) => {
     if (state === 'sending') {
-      if (kind === 'sms') return 'SENDING ALERTS...'
-      if (kind === 'call') return 'CONNECTING 911...'
+      if (kind === 'sms') return 'PREPARING ALERTS...'
+      if (kind === 'call') return 'PREPARING VOICE...'
       return 'ACTIVATING...'
     }
     if (state === 'sent') {
-      if (kind === 'sms') return 'SMS DISPATCHED'
-      if (kind === 'call') return '911 ESCALATED'
+      if (kind === 'sms') return 'ALERTS PREPARED'
+      if (kind === 'call') return 'VOICE PREPARED'
       return 'SYSTEM ACTIVE'
     }
     return 'SYSTEM READY'
@@ -347,12 +356,12 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
 
         <button
           className={`response-btn ${responseState.sms}`}
-          onClick={() => onTriggerResponse('sms', 'SMS Alert Triggered', 'SMS alerts successfully sent to all administrators.', 1400)}
+          onClick={() => onTriggerResponse('sms', 'Alert Prepared', 'Notification payload prepared for configured recipients.', 1400)}
           disabled={responseState.sms !== 'idle'}
         >
           <div className="btn-icon">{getIcon('sms', responseState.sms)}</div>
           <div className="btn-content">
-            <span className="btn-label">SMS ALERTS</span>
+            <span className="btn-label">ALERTS</span>
             <strong className="btn-status">{getStatusText('sms', responseState.sms)}</strong>
           </div>
           {responseState.sms === 'sending' && <div className="btn-glow" />}
@@ -360,7 +369,7 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
 
         <button
           className={`response-btn ${responseState.call}`}
-          onClick={() => onTriggerResponse('call', 'Emergency 911 Called', 'Emergency services have been notified and location dispatched.', 2000)}
+          onClick={() => onTriggerResponse('call', 'Voice Alert Prepared', 'Voice alert script prepared for the configured contact.', 2000)}
           disabled={responseState.call !== 'idle'}
         >
           <div className="btn-icon">{getIcon('call', responseState.call)}</div>
@@ -507,6 +516,7 @@ function App() {
   const [ragBusy, setRagBusy] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatFull, setChatFull] = useState(false)
+  const [health, setHealth] = useState(null)
 
   const addNotification = useCallback((kind, title, message, type = 'info') => {
     const id = Math.random().toString(36).substr(2, 9)
@@ -583,10 +593,10 @@ function App() {
   useEffect(() => {
     if (metrics.risk > 50) {
       if (responseState.sms === 'idle') {
-        triggerResponse('sms', 'AUTOTRIGGER: Risk level > 50. Dispatching SMSs.', 'AUTOTRIGGER: SMSs sent.', 1400)
+        triggerResponse('sms', 'AUTOTRIGGER: Risk level > 50. Preparing alerts.', 'AUTOTRIGGER: Alerts prepared.', 1400)
       }
       if (responseState.call === 'idle') {
-        triggerResponse('call', 'AUTOTRIGGER: Risk level > 50. Initiating emergency call.', 'AUTOTRIGGER: 911 call escalated.', 2000)
+        triggerResponse('call', 'AUTOTRIGGER: Risk level > 50. Preparing voice alert.', 'AUTOTRIGGER: Voice alert prepared.', 2000)
       }
       if (responseState.sprinkler === 'idle') {
         triggerResponse('sprinkler', 'AUTOTRIGGER: Risk level > 50. Activating sprinklers.', 'AUTOTRIGGER: Sprinklers active.', 1600)
@@ -610,6 +620,9 @@ function App() {
     const ping = async () => {
       const r = await fetch(`${BACKEND_URL}/api/health`).catch(() => null)
       setOnline(!!r && r.ok)
+      if (r?.ok) {
+        setHealth(await r.json())
+      }
     }
     ping()
     const timer = setInterval(ping, 3500)
@@ -871,7 +884,7 @@ function App() {
     <div className="hud-root">
       <NotificationStack notifications={notifications} onDismiss={dismissNotification} />
       <BrandHeader />
-      <StatusBar online={online} metrics={metrics} level={level} />
+      <StatusBar online={online} metrics={metrics} level={level} alertConfig={health?.alerts} />
 
 
       <section className="hud-center">
