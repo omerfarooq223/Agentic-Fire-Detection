@@ -9,6 +9,7 @@ import {
   Loader2,
   Mail,
   PhoneCall,
+  Settings,
 
   ExternalLink,
   X,
@@ -24,6 +25,7 @@ import './index.css'
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 const GITHUB_REPO_URL = 'https://github.com/omerfarooq223/Agentic-Fire-Detection'
 const PORTFOLIO_URL = 'https://omerfarooq223.github.io'
+const HUGGING_FACE_URL = 'https://huggingface.co/omerfarooq223/FireWatch-AI'
 
 // ── Utility Functions ──
 function nearestFrame(frames, t) {
@@ -59,16 +61,70 @@ function nearestFrame(frames, t) {
 
 
 // ── Subcomponents ──
-function BrandHeader({ onProfileOpen }) {
+function BrandHeader({ onProfileOpen, onBellClick, onSettingsOpen, soundEnabled }) {
   return (
     <div className="brand-header">
-      <div>
+      <div className="brand-lockup">
         <h1 className="brand-title">FireWatch AI</h1>
         <p className="brand-subtitle">Advanced Smoke & Fire Detection System</p>
       </div>
-      <button className="profile-trigger" type="button" onClick={onProfileOpen} aria-label="Open developer profile">
-        UF
-      </button>
+      <div className="brand-actions" aria-label="System controls">
+        <div className="encryption-chip">
+          <Shield size={15} />
+          <span>System Encrypted</span>
+        </div>
+        <button
+          className={`header-icon-btn ${soundEnabled ? 'is-active is-blinking' : ''}`}
+          type="button"
+          onClick={onBellClick}
+          aria-label={soundEnabled ? 'Mute alert tone' : 'Enable alert tone'}
+          title={soundEnabled ? 'Mute alert tone' : 'Enable alert tone'}
+        >
+          <BellRing size={16} />
+        </button>
+        <button className="header-icon-btn" type="button" onClick={onSettingsOpen} aria-label="Open settings" title="Open settings">
+          <Settings size={16} />
+        </button>
+        <button className="profile-trigger" type="button" onClick={onProfileOpen} aria-label="Open developer profile">
+          UF
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SettingsPanel({ open, onClose, online, soundEnabled, alertConfig }) {
+  if (!open) return null
+
+  return (
+    <div className="settings-popover" role="dialog" aria-modal="false" aria-labelledby="settings-title">
+      <div className="settings-head">
+        <div>
+          <span>Control Panel</span>
+          <h2 id="settings-title">System Settings</h2>
+        </div>
+        <button className="settings-close" type="button" onClick={onClose} aria-label="Close settings">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="settings-grid">
+        <div>
+          <span>Backend Link</span>
+          <strong>{online ? 'Connected' : 'Offline'}</strong>
+        </div>
+        <div>
+          <span>Alert Tone</span>
+          <strong>{soundEnabled ? 'Armed' : 'Muted'}</strong>
+        </div>
+        <div>
+          <span>Alert Mode</span>
+          <strong>{(alertConfig?.mode || 'demo').toUpperCase()}</strong>
+        </div>
+        <div>
+          <span>Auto Response</span>
+          <strong>{alertConfig?.auto_enabled ? 'Enabled' : 'Standby'}</strong>
+        </div>
+      </div>
     </div>
   )
 }
@@ -105,6 +161,10 @@ function ProfileModal({ open, onClose }) {
         <a className="profile-link profile-link-github" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
           <span>GitHub Repository</span>
+        </a>
+        <a className="profile-link profile-link-huggingface" href={HUGGING_FACE_URL} target="_blank" rel="noreferrer">
+          <Bot size={24} />
+          <span>Hugging Face Model</span>
         </a>
         <a className="profile-link profile-link-portfolio" href={PORTFOLIO_URL} target="_blank" rel="noreferrer">
           <ExternalLink size={24} />
@@ -173,7 +233,8 @@ function VideoDisplay({ url, videoRef, canvasRef, stageRef, analysis, online, bu
   }, [])
 
   return (
-    <div className={`radar-panel ${isFullscreen ? 'is-fullscreen' : ''} ${!url ? 'is-empty' : ''}`} ref={stageRef}>
+    <div className={`radar-panel ${isFullscreen ? 'is-fullscreen' : ''} ${url ? 'has-video' : 'is-empty'} ${analysis ? 'has-analysis' : ''}`} ref={stageRef}>
+      <div className="stream-badge">CAM_NODE_01</div>
       {url ? (
         <>
           <div className="video-container" ref={containerRef}>
@@ -440,18 +501,24 @@ function TimelineChart({ timeline }) {
       <h3>
         <Flame size={16} /> Detection Timeline
       </h3>
-      <div className="chart">
-        <ResponsiveContainer width="100%" height="100%" minHeight={240}>
-          <AreaChart data={timeline}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="t" stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-            <YAxis stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-            <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #334155', borderRadius: 10 }} />
-            <Area type="monotone" dataKey="fire" stroke="#06b6d4" fill="rgba(6,182,212,0.2)" />
-            <Line type="monotone" dataKey="smoke" stroke="#818cf8" dot={false} strokeWidth={2} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      {timeline.length ? (
+        <div className="chart">
+          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={220}>
+            <AreaChart data={timeline}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="t" stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <YAxis stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #334155', borderRadius: 10 }} />
+              <Area type="monotone" dataKey="fire" stroke="#06b6d4" fill="rgba(6,182,212,0.2)" />
+              <Line type="monotone" dataKey="smoke" stroke="#818cf8" dot={false} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <div className="chart empty-chart">
+          <span>Awaiting detection data</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -530,6 +597,8 @@ function App() {
   const [chatFull, setChatFull] = useState(false)
   const [health, setHealth] = useState(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [soundEnabled, setSoundEnabled] = useState(false)
 
   const addNotification = useCallback((kind, title, message, type = 'info') => {
     const id = Math.random().toString(36).substr(2, 9)
@@ -543,13 +612,42 @@ function App() {
     setNotifications((prev) => prev.filter((n) => n.id !== id))
   }, [])
 
+  const playAlertTone = useCallback(() => {
+    const AudioContext = window.AudioContext || window.webkitAudioContext
+    if (!AudioContext) return
+    const ctx = new AudioContext()
+    const oscillator = ctx.createOscillator()
+    const gain = ctx.createGain()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(720, ctx.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(1080, ctx.currentTime + 0.12)
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.28)
+    oscillator.connect(gain)
+    gain.connect(ctx.destination)
+    oscillator.start()
+    oscillator.stop(ctx.currentTime + 0.3)
+    setTimeout(() => ctx.close(), 420)
+  }, [])
+
+  const toggleAlertTone = useCallback(() => {
+    const next = !soundEnabled
+    setSoundEnabled(next)
+    if (next) {
+      playAlertTone()
+      addNotification('sms', 'Alert Tone Armed', 'Ringtone test played. Header alert tone is now enabled.', 'success')
+    } else {
+      addNotification('sms', 'Alert Tone Muted', 'Header alert tone has been disabled.', 'info')
+    }
+  }, [addNotification, playAlertTone, soundEnabled])
+
 
   // Initialize DetectionOverlay when canvas becomes available (after video upload)
   useEffect(() => {
     console.log('[OverlayInit] URL changed:', url ? 'video loaded' : 'no video')
     const canvas = canvasRef.current
     if (!canvas) {
-      console.warn('[OverlayInit] ❌ Canvas ref is null, skipping overlay creation')
       return
     }
 
@@ -892,10 +990,16 @@ function App() {
 
 
   return (
-    <div className="hud-root">
+    <div className={`hud-root ${url ? 'has-video' : ''} ${analysis ? 'has-analysis' : ''}`}>
       <NotificationStack notifications={notifications} onDismiss={dismissNotification} />
-      <BrandHeader onProfileOpen={() => setProfileOpen(true)} />
+      <BrandHeader
+        onProfileOpen={() => setProfileOpen(true)}
+        onBellClick={toggleAlertTone}
+        onSettingsOpen={() => setSettingsOpen((open) => !open)}
+        soundEnabled={soundEnabled}
+      />
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} online={online} soundEnabled={soundEnabled} alertConfig={health?.alerts} />
       <StatusBar online={online} metrics={metrics} level={level} alertConfig={health?.alerts} />
 
 
