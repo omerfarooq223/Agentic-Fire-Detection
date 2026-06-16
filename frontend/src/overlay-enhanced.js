@@ -121,7 +121,7 @@ class DetectionOverlay {
    * Render fire masks with smooth polygons and glow effects
    */
   renderFireMasks(ctx, vw, vh, masks, intensity) {
-    masks.forEach((poly, idx) => {
+    masks.forEach((poly) => {
       if (!poly || poly.length < 3) return
 
       const color = this.getHeatColor(intensity)
@@ -161,7 +161,7 @@ class DetectionOverlay {
    * Render fire bounding boxes with heat-based styling
    */
   renderFireBoxes(ctx, vw, vh, fireBoxes, intensity) {
-    fireBoxes.forEach((box, idx) => {
+    fireBoxes.forEach((box) => {
       const b = box?.bbox
       if (!b) return
       const x = (b.x - b.w / 2) * vw
@@ -202,7 +202,7 @@ class DetectionOverlay {
   /**
    * Render animated particles (fire sparks)
    */
-  renderParticles(ctx, vw, vh) {
+  renderParticles(ctx) {
     this.particles = this.particles.filter((p) => p.life > 0)
 
     this.particles.forEach((p) => {

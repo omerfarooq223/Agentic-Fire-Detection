@@ -4,6 +4,8 @@
 
 # Sensitive Credentials
 .env
+.env.*
+!.env.example
 credentials.json
 token.json
 
@@ -32,6 +34,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Model weights (large files — use Git LFS or store separately)
 *.pt
@@ -68,3 +73,5 @@ New Folder With Items/
 detection_images/*
 !detection_images/.gitkeep
 rag_documents/documents.json
+frontend/dist/
+node_modules/

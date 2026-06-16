@@ -22,7 +22,6 @@ import numpy as np
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from twilio.rest import Client
 from typing import Any, Optional
 
 # Load API key from .env (never hard-code secrets!)
@@ -39,12 +38,6 @@ SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
 RECEIVER_EMAILS = [email.strip() for email in os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",") if email.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
 ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
-
-# ============= TWILIO SETUP =============
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
-
 
 def get_shared_rag() -> RealRAGSystem:
     """Load the vector RAG system only when the agent actually needs it."""
@@ -182,31 +175,6 @@ class FireManagementAgent:
                             "reasoning": { "type": "string" }
                         },
                         "required": ["zone_name", "address", "severity", "action_taken"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "initiate_emergency_call",
-                    "description": "Trigger an automated emergency call with a generated script",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "script": {
-                                "type": "string",
-                                "description": "The script for the AI to read out during the call"
-                            },
-                            "recipient": {
-                                "type": "string",
-                                "description": "The phone number to call"
-                            },
-                            "press_digits": {
-                                "type": "string",
-                                "description": "Optional digits to press after answering (e.g. 'wwww1' to wait and press 1 for a menu)"
-                            }
-                        },
-                        "required": ["script", "recipient"]
                     }
                 }
             }
@@ -416,7 +384,7 @@ class FireManagementAgent:
             "lat": lat,
             "lon": lon,
             "timestamp": datetime.utcnow().isoformat(),
-            "note": "Set AUTO_ALERTS_ENABLED=true and ALERT_MODE=email or email_and_call for live dispatch.",
+            "note": "Set AUTO_ALERTS_ENABLED=true and ALERT_MODE=email for live dispatch.",
         }
         self.incident_log.append(alert)
         print(f"\n🧪 DEMO ALERT PREPARED: {channel} | {zone_name} | {severity}")
@@ -465,85 +433,6 @@ class FireManagementAgent:
         except Exception as e:
             return self._json_serialize({"error": f"Failed to send HTML alert: {str(e)}"})
 
-    def initiate_emergency_call(self, script: str, recipient: str, press_digits: str = None) -> str:
-        """Trigger a real Twilio call with TwiML for repeating message and menu navigation"""
-        print(f"\n📞 INITIATING EMERGENCY CALL TO: {recipient}")
-        print(f"   SCRIPT: \"{script}\"")
-        if press_digits:
-            print(f"   MENU NAVIGATION: Pressing '{press_digits}'")
-
-        if ALERT_MODE == "demo":
-            return self.record_demo_alert(
-                channel="voice",
-                zone_name="Emergency Contact",
-                address=recipient or "No recipient configured",
-                severity="CRITICAL",
-                action_taken="VOICE CALL SCRIPT PREPARED",
-                reasoning=script,
-            )
-
-        if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-            return self.record_demo_alert(
-                channel="voice",
-                zone_name="Emergency Contact",
-                address=recipient or "No recipient configured",
-                severity="CRITICAL",
-                action_taken="VOICE CALL SCRIPT PREPARED",
-                reasoning=(
-                    f"{script}\n\nTwilio credentials are missing, so this was kept as a demo alert."
-                ),
-            )
-
-        if not recipient:
-            return self._json_serialize({
-                "status": "Call failed",
-                "error": "EMERGENCY_RECIPIENT_PHONE is empty."
-            })
-
-        try:
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            
-            # Construct TwiML to say the message and repeat it 3 times
-            # Using <Say> with loop attribute
-            twiml_content = f"""
-            <Response>
-                <Pause length="1"/>
-                <Say loop="3" voice="Polly.Joey">{script}</Say>
-                <Say>Repeating one last time.</Say>
-                <Say voice="Polly.Joey">{script}</Say>
-                <Pause length="1"/>
-                <Say>Goodbye.</Say>
-            </Response>
-            """
-            
-            call_params = {
-                "to": recipient,
-                "from_": TWILIO_PHONE_NUMBER,
-                "twiml": twiml_content.strip()
-            }
-            
-            if press_digits:
-                # SendDigits handles the menu navigation (e.g. 'wwww1')
-                # 'w' is a half-second pause
-                call_params["send_digits"] = press_digits
-            
-            call = client.calls.create(**call_params)
-            
-            return self._json_serialize({
-                "status": "Call initiated (Twilio LIVE)",
-                "call_sid": call.sid,
-                "recipient": recipient,
-                "script": script,
-                "press_digits": press_digits,
-                "timestamp": datetime.utcnow().isoformat()
-            })
-        except Exception as e:
-            print(f"❌ Twilio Call Error: {str(e)}")
-            return self._json_serialize({
-                "status": "Call failed",
-                "error": str(e)
-            })
-
     def log_incident(self, zone_id: int, action: str, suppression_type: str, reasoning: str) -> str:
         """Log incident"""
         incident = {
@@ -587,12 +476,6 @@ class FireManagementAgent:
                 lat=tool_input.get("lat"),
                 lon=tool_input.get("lon")
             )
-        elif tool_name == "initiate_emergency_call":
-            return self.initiate_emergency_call(
-                script=tool_input.get("script"),
-                recipient=tool_input.get("recipient", os.getenv("EMERGENCY_RECIPIENT_PHONE", "DEMO_NUMBER")),
-                press_digits=tool_input.get("press_digits")
-            )
         elif tool_name == "log_incident":
             return self.log_incident(
                 zone_id=tool_input.get("zone_id"),
@@ -623,8 +506,6 @@ class FireManagementAgent:
         
         # Build context for the agent
         skip_email = detection_data.get("skip_email", False)
-        skip_call = detection_data.get("skip_call", ALERT_MODE == "email")
-        
         system_prompt = f"""You are a fire management AI agent. You receive fire detection alerts and must:
 1. Query the safety procedures for the detected zone
 2. Get suppression system information
@@ -632,22 +513,17 @@ class FireManagementAgent:
 4. Decide on appropriate suppression system activation
 5. Log the incident with your reasoning
 6. Trigger 'send_emergency_email' ONLY if skip_email is False. (Current skip_email status: {skip_email})
-7. Generate a concise, urgent call script and trigger 'initiate_emergency_call' for the configured emergency contact ONLY if skip_call is False. (Current skip_call status: {skip_call})
-    - If the configured contact uses an automated phone menu, use 'press_digits' to navigate menus (e.g., 'wwww1' to wait 2 seconds and press 1).
-    - For direct emergency contacts, no digits are needed.
 
 CRITICAL RULE:
-- You must send exactly ONE email and make exactly ONE call per detection. 
-- If you see a tool result for 'send_emergency_email' or 'initiate_emergency_call' in the message history, DO NOT call them again.
+- You must send exactly ONE email per detection when email dispatch is enabled.
+- If you see a tool result for 'send_emergency_email' in the message history, DO NOT call it again.
 - Once the alert tools are called, summarize your final response and exit.
 
 MANDATORY RULES:
 - Use 'send_emergency_email' as soon as fire is confirmed.
 - For 'severity', use 'CRITICAL' if segment area is > 1000 pixels, otherwise 'HIGH'.
-- The call script should still be natural and urgent.
-- If you need to navigate a menu, explain why you are using 'press_digits'.
 
-You have access to tools to query procedures, suppression info, the knowledge base, and communication channels.
+You have access to tools to query procedures, suppression info, the knowledge base, and email alerts.
 Always follow NFPA standards and zone-specific procedures.
 Log all decisions with clear reasoning."""
         
@@ -677,7 +553,6 @@ Provide your analysis and decisions."""
         active_tools = [
             t for t in self.tools
             if not (skip_email and t["function"]["name"] == "send_emergency_email")
-            and not (skip_call and t["function"]["name"] == "initiate_emergency_call")
         ]
 
         iteration = 0

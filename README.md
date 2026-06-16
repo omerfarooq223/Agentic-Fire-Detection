@@ -1,164 +1,170 @@
-# FireWatch AI: Autonomous Fire & Smoke Incident Management System
+# FireWatch AI: Fire and Smoke Detection Dashboard
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
-[![YOLOv8](https://img.shields.io/badge/YOLOv8-00A6ED?style=for-the-badge&logo=yolo)](https://ultralytics.com/)
-[![Llama 3.3](https://img.shields.io/badge/LLM-Llama_3.3_70B-818cf8?style=for-the-badge&logo=meta)](https://groq.com/)
-[![Gmail API](https://img.shields.io/badge/Alerts-Gmail_API-e11d48?style=for-the-badge&logo=gmail)](https://developers.google.com/gmail/api)
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-00A6ED?style=for-the-badge)](https://ultralytics.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 
-FireWatch AI is a production-grade, high-fidelity monitoring ecosystem designed for autonomous fire and smoke detection. It integrates state-of-the-art computer vision (YOLOv8) with a sophisticated **Hybrid Emergency Coordinator** and a high-end Cyber HUD dashboard.
+FireWatch AI is a fire and smoke monitoring system with a FastAPI backend, YOLO-based video analysis, a React tactical dashboard, optional RAG-assisted safety guidance, and demo-safe alert workflows.
 
 ![System Demo](./demo.gif)
 
----
+## Features
 
-## 🚀 System Capabilities
+- Video upload and frame sampling for fire/smoke analysis.
+- React + Vite dashboard with animated overlays, timeline metrics, response controls, and a floating safety assistant.
+- FastAPI backend with SQLite-backed zones, detections, incidents, and safety procedures.
+- Optional YOLO model weights for real detection, with a heuristic fallback when no local model is available.
+- Optional Groq-powered RAG answer synthesis.
+- Demo-safe Gmail alert modes with confirmation frames and cooldown guards.
 
-### 1. Hybrid Emergency Response (0-Latency)
-The system utilizes a dual-engine response architecture for maximum speed and intelligence:
-- **Confirmed Response (Safety):** A pure Python engine prepares or dispatches alerts after configurable multi-frame confirmation and cooldown checks.
-- **Agentic Coordination (Intelligence):** A Llama 3.3-powered agent performs post-incident reasoning and RAG procedure lookups.
-- **Precision GPS Pinpointing:** Integrates browser-level Geolocation APIs to capture **exact GPS coordinates** for "One-Click Rescue" navigation.
-
-### 2. Cyber HUD Visual Overlay
-A sophisticated, canvas-based particle engine that transforms raw video feeds into actionable intelligence with heat-maps and real-time tactical overlays.
-
-### 3. Agentic RAG Assistant
-Integrated **Retrieval-Augmented Generation (RAG)** system built on FAISS for NFPA and OSHA safety standard consultation.
-
----
-
-## 📂 Project Structure
+## Repository Layout
 
 ```text
 .
-├── fire_backend.py      # Core FastAPI Server & Frame Processing
-├── fire_agent.py        # AI Management Agent (Reasoning & Alerts)
-├── real_rag_system.py   # RAG Vector Search (NFPA Safety Docs)
-├── models/
-│   └── best.pt          # YOLOv8 Weights (Fire/Smoke)
-├── frontend/            # React + Vite Tactical Dashboard
-│   ├── src/
-│   │   ├── App.jsx      # Dashboard Logic & GPS Capture
-│   │   └── index.css    # Cyber HUD Styles
-├── fire_system.db       # Incident History & Zone Database
-├── credentials.json     # Google Cloud Auth (Required)
-└── .env                 # API Keys & Configuration
+├── fire_backend.py            # FastAPI API, detection pipeline, alert orchestration
+├── fire_agent.py              # Agent tools, Gmail helpers, emergency response logic
+├── real_rag_system.py         # FAISS/sentence-transformers RAG implementation
+├── frontend/                  # React + Vite dashboard
+├── docs/ALERTING.md           # Alert modes and safety guardrails
+├── tests/                     # Manual integration/demo scripts
+├── .env.example               # Safe environment template
+└── requirements.txt           # Python dependencies
 ```
 
----
+Local runtime files such as `.env`, `credentials.json`, `token.json`, `fire_system.db`, `best.pt`, `models/*.pt`, and generated detection images are intentionally ignored by git.
 
-## 🏗️ Technical Architecture
+## Prerequisites
 
-```mermaid
-graph TB
-    %% Detection Layer
-    subgraph Detection ["🛡️ 1. DETECTION LAYER (YOLOv8)"]
-        direction TB
-        input[Video / CCTV Stream] --> yolo[best.pt Detection Engine]
-    end
+- Python 3.10+
+- Node.js 18+
+- Optional: a YOLO model weight file such as `best.pt`
+- Optional: a Groq API key for generated RAG responses
+- Optional: Gmail API OAuth credentials for live email alerting
 
-    %% Hybrid Engine
-    subgraph Hybrid ["⚙️ 2. HYBRID RESPONSE ENGINE"]
-        direction TB
-        direct[Direct Code: 0-Latency Alert]
-        agent[AI Agent: Deep Analysis]
-        direct --- agent
-    end
+## Setup
 
-    %% Communication Layer
-    subgraph Comm ["📧 3. COMMUNICATION LAYER"]
-        direction TB
-        gmail[Gmail API: OAuth2]
-        maps[High-Accuracy GPS Mapping]
-        gmail --- maps
-    end
+1. Create and activate a Python environment.
 
-    %% Backend Layer
-    subgraph Backend ["💾 4. DATA LAYER (FastAPI + SQLite)"]
-        direction TB
-        db[(Fire Incident DB)]
-        rag[RAG Safety Knowledge]
-    end
-
-    %% Inter-layer connections
-    Detection -->|First Frame Detection| direct
-    direct -->|Instant Dispatch| Comm
-    direct -->|Background Task| agent
-    agent -->|Context Retrieval| rag
-    agent -->|Incident Logging| db
-    Comm -->|Stakeholder Alert| User[End User]
-
-    %% Styling
-    style Detection fill:#0a1a2a,stroke:#22d3ee,stroke-width:2px,color:#fff
-    style Hybrid fill:#0a1a2a,stroke:#818cf8,stroke-width:2px,color:#fff
-    style Comm fill:#0a1a2a,stroke:#e11d48,stroke-width:2px,color:#fff
-    style Backend fill:#0a1a2a,stroke:#ec4899,stroke-width:2px,color:#fff
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
----
+2. Install frontend dependencies.
 
-## 🏛️ System Architecture & Data Flow
+```bash
+npm install --prefix frontend
+```
 
-FireWatch AI is built on a modular, asynchronous architecture designed for high availability and low-latency response.
+3. Create local environment settings.
 
-### 1. Perception Layer (Computer Vision)
-- **Engine:** YOLOv8 (Segmentation Model)
-- **Task:** Real-time analysis of video frames to identify fire and smoke polygons.
+```bash
+cp .env.example .env
+```
 
-### 2. Hybrid Response Engine (Dual-Path)
-- **Fast-Path (Pure Python):** Triggered on the very first detection frame to ensure emails are sent in < 500ms.
-- **Analytical-Path (AI Agent):** Triggered in the background to initiate a multi-step reasoning loop and incident logging.
+Keep the default safe alert settings for demos:
 
-### 3. Intelligence Layer (Agentic & RAG)
-- **AI Agent:** A ReAct-style agent that uses tools to interact with the system.
-- **RAG System:** A FAISS vector database containing specialized fire safety procedures.
-
-### 4. Communication Layer
-- **Demo-safe Alerts:** Default mode prepares alerts without contacting real people.
-- **Gmail API:** Optional OAuth2-based email dispatching using premium HTML templates.
-- **Twilio Voice:** Optional voice calls when a live Twilio account is available.
-- **Geolocation:** High-accuracy browser-based GPS capturing for pinpoint rescue.
-
----
-
-## 🛠️ Setup & Configuration
-
-### 1) Prerequisites
-- Python 3.10+, Node.js 18+
-- Google Cloud Console Project (Gmail API enabled)
-- Groq API Key
-
-### 2) Environment Setup (`.env`)
 ```env
-GROQ_API_KEY=your_key_here
-FIRE_DETECT_MODEL=./models/best.pt
-REMINDER_EMAIL_SENDER=your_gmail@gmail.com
-REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com
 ALERT_MODE=demo
 AUTO_ALERTS_ENABLED=false
 ALERT_CONFIRMATION_FRAMES=3
 ALERT_COOLDOWN_SECONDS=300
 ```
 
-### 3) Gmail API Authentication
-Place `credentials.json` in the root directory and run the system once to authorize and generate `token.json`.
+4. Add a local model file if you have one.
 
-### 4) Alerting and Twilio
-Twilio is optional. The project works in `ALERT_MODE=demo` without a Twilio account and records prepared call/email payloads for demonstration. For live email alerts, use `ALERT_MODE=email` and set `AUTO_ALERTS_ENABLED=true`. For live calls, use `ALERT_MODE=email_and_call` only after configuring verified Twilio numbers.
+```env
+FIRE_DETECT_MODEL=./best.pt
+```
 
-See [docs/ALERTING.md](./docs/ALERTING.md) for the alerting modes, Twilio limitations, and safety guards.
+Large model files should stay outside git. Use Git LFS, a release asset, or a model registry if you need to share them.
 
----
+## Run Locally
 
-## 👤 Credits
+Start the backend:
 
-<div align="center">
-  <p>Designed and Developed with precision by</p>
-  <h3><strong>Muhammad Umar Farooq</strong></h3>
-  <a href="https://omerfarooq223.github.io">
-    <img src="https://img.shields.io/badge/View_Portfolio-00A6ED?style=for-the-badge&logo=react&logoColor=white" alt="Portfolio" />
-  </a>
-  <br/><br/>
-  <i>"Building the future of autonomous safety systems."</i>
-</div>
+```bash
+uvicorn fire_backend:app --reload --host 0.0.0.0 --port 8000
+```
+
+Start the frontend in another terminal:
+
+```bash
+npm run dev --prefix frontend
+```
+
+Then open the Vite URL, usually `http://localhost:5173`.
+
+Useful backend URLs:
+
+- API health: `http://localhost:8000/api/health`
+- API docs: `http://localhost:8000/docs`
+
+## Deployment
+
+Recommended split:
+
+- Frontend: Vercel static Vite deployment.
+- Backend: Render Python web service.
+
+Vercel frontend settings:
+
+- Root directory: `frontend`
+- Framework preset: `Vite`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Environment variable: `VITE_BACKEND_URL=https://your-backend.onrender.com`
+
+Render backend settings:
+
+- Language: `Python 3`
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn fire_backend:app --host 0.0.0.0 --port $PORT`
+
+Backend environment variables:
+
+```env
+ALERT_MODE=demo
+AUTO_ALERTS_ENABLED=false
+CORS_ORIGINS=https://your-frontend.vercel.app
+GROQ_API_KEY=your_key_here
+```
+
+For live Gmail alerts, add the Gmail variables from `.env.example` and keep OAuth files out of git.
+
+Production notes:
+
+- SQLite and generated detection images are local runtime files. Use persistent storage or a hosted database for anything beyond a demo.
+- Model weights are intentionally not committed. Add them through persistent storage, a release artifact, or another model delivery flow.
+- Vite exposes `VITE_*` values in browser code, so do not put secrets in frontend environment variables.
+
+## Alerts
+
+The default configuration does not contact real people. For live alerts, configure `.env` intentionally and read [docs/ALERTING.md](./docs/ALERTING.md).
+
+Do not configure this project to contact real emergency services.
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+python3 -m compileall fire_backend.py fire_agent.py real_rag_system.py tests
+```
+
+The scripts in `tests/` are manual integration/demo scripts. They expect the backend to be running and may create local database/image state, so they are not run automatically in CI.
+
+## GitHub Hygiene
+
+- Commit source, docs, lockfiles, and small static assets.
+- Do not commit `.env`, OAuth tokens, credentials, local databases, generated captures, or model weights.
+- Rotate any credential that was ever committed or shared publicly.
+- Keep live alerting disabled unless you are deliberately testing with verified recipients.
+
+## Credits
+
+Designed and developed by Muhammad Umar Farooq.
+
+[Portfolio](https://omerfarooq223.github.io)

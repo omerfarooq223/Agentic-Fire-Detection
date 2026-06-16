@@ -289,16 +289,7 @@ async def startup():
     else:
         print("✅ Gmail API (token.json) detected.")
         
-    # 3. Check Twilio (Voice Calls)
-    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
-    if not all([twilio_sid, twilio_token, twilio_phone]):
-        print("ℹ️  Twilio credentials missing. Voice calls will use demo mode unless ALERT_MODE=email_and_call is fully configured.")
-    else:
-        print("✅ Twilio Voice credentials detected.")
-    
-    # 4. Check YOLO Weights
+    # 3. Check YOLO Weights
     if not DEFAULT_DETECT_PT.is_file():
         print(f"⚠️  WARNING: YOLO weights not found at {DEFAULT_DETECT_PT}. Ensure 'best.pt' is present.")
     else:
@@ -531,7 +522,7 @@ def dispatch_confirmed_alert(
         "Location data attached when available."
     )
 
-    if ALERT_MODE in {"email", "email_and_call"}:
+    if ALERT_MODE == "email":
         background_tasks.add_task(
             agent.send_emergency_email,
             zone_name=zone_name,
@@ -554,15 +545,6 @@ def dispatch_confirmed_alert(
             lat=lat,
             lon=lon,
         )
-
-    if ALERT_MODE == "email_and_call":
-        script = f"FireWatch AI emergency alert. Fire or smoke is confirmed at {zone_name}, {address}. Please respond immediately."
-        background_tasks.add_task(
-            agent.initiate_emergency_call,
-            script=script,
-            recipient=os.getenv("EMERGENCY_RECIPIENT_PHONE", ""),
-        )
-
 
 def _boxes_from_result(result, im_w: int, im_h: int) -> list:
     out = []
@@ -921,7 +903,6 @@ async def log_detection(
             "segment_area_pixels": segment_area_pixels,
             "detection_id": db_detection.detection_id,
             "skip_email": not AUTO_ALERTS_ENABLED,
-            "skip_call": not AUTO_ALERTS_ENABLED or ALERT_MODE == "email",
         }
         background_tasks.add_task(agent.reason, agent_data)
         
@@ -1186,7 +1167,6 @@ async def analyze_uploaded_video(
                         "segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
                         "is_confirmed_alert": True,
                         "skip_email": True,
-                        "skip_call": True,
                     }
                     background_tasks.add_task(agent.reason, agent_data)
 

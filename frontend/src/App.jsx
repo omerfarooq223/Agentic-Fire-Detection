@@ -8,11 +8,9 @@ import {
   Flame,
   Loader2,
   Mail,
-  PhoneCall,
   Send,
   Shield,
   Upload,
-  Video,
   Wind,
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -111,33 +109,7 @@ function StatusBar({ online, metrics, level, alertConfig }) {
   )
 }
 
-function VideoUploadPanel({ online, file, busy, exporting, error, onPick, onDetect, onDownload }) {
-  return (
-    <div className="panel center-controls">
-      <h3>
-        <Video size={16} /> Video Source
-      </h3>
-      <label className={`upload ${!online ? 'disabled' : ''}`}>
-        <input type="file" accept="video/*" disabled={!online} onChange={(e) => onPick(e.target.files?.[0])} />
-        <Upload size={24} />
-        <p>{file ? file.name : 'Upload video'}</p>
-      </label>
-      <div className="row">
-        <button className="btn red" onClick={onDetect} disabled={!online || busy || !file}>
-          {busy ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
-          Detect
-        </button>
-        <button className="btn blue" onClick={onDownload} disabled={!online || exporting || !file}>
-          {exporting ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
-          Export
-        </button>
-      </div>
-      {error && <div className="inline-error">{error}</div>}
-    </div>
-  )
-}
-
-function VideoDisplay({ url, videoRef, canvasRef, stageRef, frame, analysis, file, online, busy, exporting, onPick, onDetect, onDownload, onTime, onReset, error }) {
+function VideoDisplay({ url, videoRef, canvasRef, stageRef, analysis, online, busy, exporting, onPick, onDetect, onDownload, onTime, onReset, error }) {
   const containerRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
@@ -171,7 +143,7 @@ function VideoDisplay({ url, videoRef, canvasRef, stageRef, frame, analysis, fil
               muted
               playsInline
               className="video"
-              onLoadedMetadata={(e) => {
+              onLoadedMetadata={() => {
                 onTime()
               }}
               onPlay={onTime}
@@ -319,12 +291,10 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
   const getStatusText = (kind, state) => {
     if (state === 'sending') {
       if (kind === 'sms') return 'PREPARING ALERTS...'
-      if (kind === 'call') return 'PREPARING VOICE...'
       return 'ACTIVATING...'
     }
     if (state === 'sent') {
       if (kind === 'sms') return 'ALERTS PREPARED'
-      if (kind === 'call') return 'VOICE PREPARED'
       return 'SYSTEM ACTIVE'
     }
     return 'SYSTEM READY'
@@ -334,7 +304,6 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
     const size = 20
     if (state === 'sending') return <Loader2 size={size} className="spin" />
     if (kind === 'sms') return <Mail size={size} />
-    if (kind === 'call') return <PhoneCall size={size} />
     return <BellRing size={size} />
   }
 
@@ -368,19 +337,6 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
         </button>
 
         <button
-          className={`response-btn ${responseState.call}`}
-          onClick={() => onTriggerResponse('call', 'Voice Alert Prepared', 'Voice alert script prepared for the configured contact.', 2000)}
-          disabled={responseState.call !== 'idle'}
-        >
-          <div className="btn-icon">{getIcon('call', responseState.call)}</div>
-          <div className="btn-content">
-            <span className="btn-label">EMERGENCY CALL</span>
-            <strong className="btn-status">{getStatusText('call', responseState.call)}</strong>
-          </div>
-          {responseState.call === 'sending' && <div className="btn-glow" />}
-        </button>
-
-        <button
           className={`response-btn ${responseState.sprinkler}`}
           onClick={() => onTriggerResponse('sprinkler', 'Sprinkler System Activated', 'Fire suppression system is now active in the affected zones.', 1600)}
           disabled={responseState.sprinkler !== 'idle'}
@@ -404,7 +360,6 @@ function NotificationStack({ notifications, onDismiss }) {
         <div key={n.id} className={`notification-item ${n.type}`} onClick={() => onDismiss(n.id)}>
           <div className="notification-icon">
             {n.kind === 'sms' && <Mail size={18} />}
-            {n.kind === 'call' && <PhoneCall size={18} />}
             {n.kind === 'sprinkler' && <BellRing size={18} />}
             {!n.kind && <AlertTriangle size={18} />}
           </div>
@@ -504,13 +459,11 @@ function App() {
   const [url, setUrl] = useState(null)
   const [coords, setCoords] = useState({ lat: null, lon: null })
   const [analysis, setAnalysis] = useState(null)
-  const [frame, setFrame] = useState(null)
   const [busy, setBusy] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [err, setErr] = useState(null)
-  const [events, setEvents] = useState([])
   const [notifications, setNotifications] = useState([])
-  const [responseState, setResponseState] = useState({ sms: 'idle', call: 'idle', sprinkler: 'idle' })
+  const [responseState, setResponseState] = useState({ sms: 'idle', sprinkler: 'idle' })
   const [ragQ, setRagQ] = useState('')
   const [chatHistory, setChatHistory] = useState([])
   const [ragBusy, setRagBusy] = useState(false)
@@ -554,7 +507,7 @@ function App() {
 
   // ── Helpers & Memos ──
   const trigger = useCallback((msg) => {
-    setEvents((prev) => [`${new Date().toLocaleTimeString()} ${msg}`, ...prev].slice(0, 8))
+    console.info(`[Event] ${new Date().toLocaleTimeString()} ${msg}`)
   }, [])
 
   const triggerResponse = useCallback((kind, title, message, delay = 1700) => {
@@ -594,9 +547,6 @@ function App() {
     if (metrics.risk > 50) {
       if (responseState.sms === 'idle') {
         triggerResponse('sms', 'AUTOTRIGGER: Risk level > 50. Preparing alerts.', 'AUTOTRIGGER: Alerts prepared.', 1400)
-      }
-      if (responseState.call === 'idle') {
-        triggerResponse('call', 'AUTOTRIGGER: Risk level > 50. Preparing voice alert.', 'AUTOTRIGGER: Voice alert prepared.', 2000)
       }
       if (responseState.sprinkler === 'idle') {
         triggerResponse('sprinkler', 'AUTOTRIGGER: Risk level > 50. Activating sprinklers.', 'AUTOTRIGGER: Sprinklers active.', 1600)
@@ -726,15 +676,13 @@ function App() {
   }, [renderLoop, url])
 
   const onTime = useCallback(() => {
-    const v = videoRef.current
-    if (!v || !analysis?.frames?.length) {
-      latestFrameRef.current = null
-      setFrame(null)
-      return
-    }
-    const s = nearestFrame(analysis.frames, v.currentTime)
-    latestFrameRef.current = s
-    setFrame(s)
+      const v = videoRef.current
+      if (!v || !analysis?.frames?.length) {
+        latestFrameRef.current = null
+        return
+      }
+      const s = nearestFrame(analysis.frames, v.currentTime)
+      latestFrameRef.current = s
 
     // Debug: Log frame updates (every 10 frame updates)
     if (!window.__frameCount) window.__frameCount = 0
@@ -755,7 +703,7 @@ function App() {
     if (!f || !f.type.startsWith('video/')) return setErr('Select a valid video file.')
     setErr(null)
     setAnalysis(null)
-    setFrame(null)
+    latestFrameRef.current = null
     if (url) URL.revokeObjectURL(url)
     setFile(f)
     const blobUrl = URL.createObjectURL(f)
@@ -773,8 +721,8 @@ function App() {
       setAnalysis(null)
       console.log('[ResetVideo] Step 2: Analysis cleared')
 
-      setFrame(null)
-      console.log('[ResetVideo] Step 3: Frame cleared')
+      latestFrameRef.current = null
+      console.log('[ResetVideo] Step 3: Frame reference cleared')
 
       if (url) {
         URL.revokeObjectURL(url)
@@ -816,7 +764,7 @@ function App() {
       if (!res.ok) throw new Error(data.detail || 'Detection failed')
       setAnalysis(data)
       console.log('[Detect] ✅ Analysis set with', data.frames?.length, 'frames')
-      setEvents((prev) => [`${new Date().toLocaleTimeString()} detection completed`, ...prev].slice(0, 8))
+      trigger('detection completed')
     } catch (e) {
       console.error('[Detect] ❌ Error:', e)
       setErr(e.message || 'Detection failed.')
@@ -893,7 +841,6 @@ function App() {
           videoRef={videoRef}
           canvasRef={canvasRef}
           stageRef={stageRef}
-          frame={frame}
           online={online}
           busy={busy}
           exporting={exporting}
@@ -903,7 +850,6 @@ function App() {
           onTime={onTime}
           onReset={resetVideo}
           analysis={analysis}
-          file={file}
           error={err}
         />
       </section>
