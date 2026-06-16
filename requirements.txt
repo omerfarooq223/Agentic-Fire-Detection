@@ -19,6 +19,7 @@ opencv-python-headless>=4.9.0
 
 # Agentic RAG System
 sentence-transformers>=2.5.0
+transformers<4.49.0
 faiss-cpu>=1.7.0
 langchain>=0.1.0
 

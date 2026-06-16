@@ -53,8 +53,6 @@ Build Command: pip install -r requirements.txt
 Start Command: uvicorn fire_backend:app --host 0.0.0.0 --port $PORT
 ```
 
-Set `PYTHON_VERSION=3.11.9` in Render or keep `.python-version` committed at the repo root.
-
 Set:
 
 ```env
@@ -113,7 +111,6 @@ Then redeploy the backend.
 
 - Render free instances may sleep, so the first request can be slow.
 - Hugging Face model download can add cold-start time.
-- If Render logs show Python `3.14.x` or large `nvidia-*`, `cuda-*`, or GPU Torch packages, the deploy is still using an older commit or missing the `PYTHON_VERSION` / `.python-version` pin.
 - SQLite and generated detection images are local runtime files. Use persistent storage or a hosted database for production.
 - `VITE_*` frontend variables are public in the browser bundle. Never put secrets there.
 - Keep `package.json` and `package-lock.json` committed at both the root and `frontend/` levels. The root files provide convenience scripts; the frontend files define the Vite app.

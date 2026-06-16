@@ -43,7 +43,6 @@ FireWatch AI
 ├── fire_agent.py                 # Agent tools, Gmail helpers, emergency response logic
 ├── fire_backend.py               # FastAPI API, detection pipeline, alert orchestration
 ├── real_rag_system.py            # FAISS/sentence-transformers RAG implementation
-├── .python-version               # Render Python runtime pin
 ├── requirements.txt              # Python dependencies
 ├── package.json                  # Root convenience scripts
 └── package-lock.json             # Root npm lockfile for wrapper scripts
@@ -171,7 +170,7 @@ Render backend settings:
 - Language: `Python 3`
 - Build command: `pip install -r requirements.txt`
 - Start command: `uvicorn fire_backend:app --host 0.0.0.0 --port $PORT`
-- Python version: set `PYTHON_VERSION=3.11.9` in Render or keep `.python-version` committed
+- Python version: set `PYTHON_VERSION=3.11.9` in Render
 
 Backend environment variables:
 
@@ -190,7 +189,6 @@ Production notes:
 
 - SQLite and generated detection images are local runtime files. Use persistent storage or a hosted database for anything beyond a demo.
 - Model weights are intentionally not committed. Use Hugging Face Hub for `best.pt`, or add persistent storage if you prefer to keep weights on Render.
-- If Render logs still show Python `3.14.x` or large `nvidia-*` / `cuda-*` packages, the deploy is not using the latest commit or Python version setting yet.
 - Vite exposes `VITE_*` values in browser code, so do not put secrets in frontend environment variables.
 
 ## Alerts
