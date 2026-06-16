@@ -9,6 +9,9 @@ This repository is intended for research, prototyping, and controlled demonstrat
 Never commit:
 
 - `.env`
+- `secrets/`
+- `.secrets/`
+- `local_assets/`
 - `credentials.json`
 - `token.json`
 - API keys
@@ -18,6 +21,8 @@ Never commit:
 - model weights
 
 If a secret is exposed, revoke and rotate it immediately.
+
+Do not store credentials in `docs/`. Documentation should be safe to publish.
 
 ## Alerting Safety
 

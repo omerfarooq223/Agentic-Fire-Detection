@@ -34,6 +34,7 @@ from real_rag_system import RealRAGSystem
 from fire_agent import FireManagementAgent
 import requests
 from dotenv import load_dotenv
+from huggingface_hub import hf_hub_download
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -55,6 +56,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 SEG_RESULTS_ZIP = PROJECT_ROOT / "fire_seg_final_results.zip"
 SEG_WEIGHTS_PT = PROJECT_ROOT / "models" / "fire_seg" / "weights" / "best.pt"
 DEFAULT_DETECT_PT = PROJECT_ROOT / "best.pt"
+HF_MODEL_REPO = os.getenv("HF_MODEL_REPO", "").strip()
+HF_MODEL_FILENAME = os.getenv("HF_MODEL_FILENAME", "best.pt").strip() or "best.pt"
+HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
+HF_MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
+GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
 
 _yolo_det: Any = None
 _yolo_seg: Any = None
@@ -284,16 +290,18 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
     
     # 2. Check Gmail API (Alerts)
-    if not os.path.exists('token.json'):
-        print("⚠️  WARNING: 'token.json' not found. Gmail alerts will fail. Run the system and authorize to generate it.")
+    if not os.path.exists(GOOGLE_TOKEN_FILE):
+        print(f"⚠️  WARNING: '{GOOGLE_TOKEN_FILE}' not found. Gmail alerts will fail until OAuth is configured.")
     else:
-        print("✅ Gmail API (token.json) detected.")
+        print(f"✅ Gmail API token detected at {GOOGLE_TOKEN_FILE}.")
         
     # 3. Check YOLO Weights
-    if not DEFAULT_DETECT_PT.is_file():
-        print(f"⚠️  WARNING: YOLO weights not found at {DEFAULT_DETECT_PT}. Ensure 'best.pt' is present.")
-    else:
+    if DEFAULT_DETECT_PT.is_file():
         print(f"✅ YOLO Weights detected at {DEFAULT_DETECT_PT}.")
+    elif HF_MODEL_REPO:
+        print(f"ℹ️  YOLO weights will be downloaded from Hugging Face repo '{HF_MODEL_REPO}'.")
+    else:
+        print(f"⚠️  WARNING: YOLO weights not found at {DEFAULT_DETECT_PT}. Set FIRE_DETECT_MODEL or HF_MODEL_REPO for hosted weights.")
 
 
 # ============= UTILITY FUNCTIONS =============
@@ -432,8 +440,23 @@ def get_yolo_det() -> Optional[Any]:
     env = os.environ.get("FIRE_DETECT_MODEL")
     path = Path(env).expanduser() if env else DEFAULT_DETECT_PT
     if not path.is_file():
-        _yolo_det = None
-        return None
+        if HF_MODEL_REPO:
+            try:
+                path = Path(
+                    hf_hub_download(
+                        repo_id=HF_MODEL_REPO,
+                        filename=HF_MODEL_FILENAME,
+                        token=HF_TOKEN,
+                        cache_dir=str(HF_MODEL_CACHE_DIR),
+                    )
+                )
+            except Exception as exc:
+                print(f"⚠️  Could not download YOLO weights from Hugging Face: {exc}")
+                _yolo_det = None
+                return None
+        else:
+            _yolo_det = None
+            return None
     try:
         rpath = path.resolve()
         if rpath == SEG_WEIGHTS_PT.resolve():

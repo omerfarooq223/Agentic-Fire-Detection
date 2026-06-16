@@ -22,7 +22,22 @@ REMINDER_EMAIL_SENDER=your_email@gmail.com
 REMINDER_EMAIL_RECEIVERS=stakeholder1@email.com,stakeholder2@email.com
 ```
 
-You also need `credentials.json` and `token.json` for the Gmail API. Keep both files local and out of git.
+You also need Gmail OAuth files. Keep them local and out of git.
+
+Recommended local placement:
+
+```text
+secrets/credentials.json
+secrets/token.json
+```
+
+Then set:
+
+```env
+GOOGLE_TOKEN_FILE=secrets/token.json
+```
+
+Do not store credentials under `docs/`; documentation folders are meant to be public.
 
 ## Safety Guards
 

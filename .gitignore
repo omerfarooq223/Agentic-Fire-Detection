@@ -8,12 +8,16 @@
 !.env.example
 credentials.json
 token.json
+secrets/
+.secrets/
+local_assets/
 
 # Databases and Local Storage
 fire_system.db
 detection_images/
 fire_seg_final_results.zip
 *.pt
+model_cache/
 
 # Python/Environment
 __pycache__/

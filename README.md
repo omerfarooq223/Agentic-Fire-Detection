@@ -21,18 +21,38 @@ FireWatch AI is a fire and smoke monitoring system with a FastAPI backend, YOLO-
 ## Repository Layout
 
 ```text
-.
-├── fire_backend.py            # FastAPI API, detection pipeline, alert orchestration
-├── fire_agent.py              # Agent tools, Gmail helpers, emergency response logic
-├── real_rag_system.py         # FAISS/sentence-transformers RAG implementation
-├── frontend/                  # React + Vite dashboard
-├── docs/ALERTING.md           # Alert modes and safety guardrails
-├── tests/                     # Manual integration/demo scripts
-├── .env.example               # Safe environment template
-└── requirements.txt           # Python dependencies
+FireWatch AI
+├── .github/workflows/ci.yml      # GitHub Actions checks
+├── docs/
+│   ├── ALERTING.md               # Demo/email alert modes and safety guardrails
+│   └── DEPLOYMENT.md             # Vercel + Render + Hugging Face deployment guide
+├── frontend/                     # React + Vite dashboard
+│   ├── src/                      # Dashboard source
+│   ├── public/                   # Static frontend assets
+│   ├── package.json              # Frontend scripts and dependencies
+│   └── package-lock.json         # Reproducible frontend installs
+├── tests/                        # Manual integration/demo scripts
+│   ├── manual_emergency.py       # Manual agent workflow check
+│   ├── test_agent.py             # Manual agent/backend integration demo
+│   └── test_backend.py           # Manual backend API demo
+├── .env.example                  # Safe environment template
+├── .gitattributes                # Text/binary and model-weight handling hints
+├── .gitignore                    # Local secrets, models, caches, and runtime outputs
+├── CONTRIBUTING.md               # Contribution and local check notes
+├── SECURITY.md                   # Secret handling and safety notes
+├── fire_agent.py                 # Agent tools, Gmail helpers, emergency response logic
+├── fire_backend.py               # FastAPI API, detection pipeline, alert orchestration
+├── real_rag_system.py            # FAISS/sentence-transformers RAG implementation
+├── requirements.txt              # Python dependencies
+├── package.json                  # Root convenience scripts
+└── package-lock.json             # Root npm lockfile for wrapper scripts
 ```
 
 Local runtime files such as `.env`, `credentials.json`, `token.json`, `fire_system.db`, `best.pt`, `models/*.pt`, and generated detection images are intentionally ignored by git.
+
+The root `package.json` and `package-lock.json` should stay committed. They do not duplicate the frontend app; they provide repo-level commands like `npm run check`, while `frontend/package.json` owns the actual React dependencies.
+
+Do not create `docs/credentials/` for secrets. Keep private local files in ignored folders such as `secrets/` or `local_assets/`; `docs/` is for public documentation.
 
 ## Prerequisites
 
@@ -64,13 +84,31 @@ npm install --prefix frontend
 cp .env.example .env
 ```
 
-Keep the default safe alert settings for demos:
+For local development, update `.env` only as needed:
 
 ```env
+FIRE_DETECT_MODEL=./best.pt
 ALERT_MODE=demo
 AUTO_ALERTS_ENABLED=false
 ALERT_CONFIRMATION_FRAMES=3
 ALERT_COOLDOWN_SECONDS=300
+```
+
+Keep `.env` private. Do not commit it.
+
+Optional cleaner local layout:
+
+```text
+secrets/token.json
+secrets/credentials.json
+local_assets/best.pt
+```
+
+Then set:
+
+```env
+GOOGLE_TOKEN_FILE=secrets/token.json
+FIRE_DETECT_MODEL=./local_assets/best.pt
 ```
 
 4. Add a local model file if you have one.
@@ -80,6 +118,14 @@ FIRE_DETECT_MODEL=./best.pt
 ```
 
 Large model files should stay outside git. Use Git LFS, a release asset, or a model registry if you need to share them.
+
+For deployment, the backend can download weights from Hugging Face Hub instead:
+
+```env
+HF_MODEL_REPO=your-username/firewatch-yolo
+HF_MODEL_FILENAME=best.pt
+HF_TOKEN=your_read_token_for_private_repos
+```
 
 ## Run Locally
 
@@ -96,6 +142,8 @@ npm run dev --prefix frontend
 ```
 
 Then open the Vite URL, usually `http://localhost:5173`.
+
+The frontend production build is generated in `frontend/dist/`. Frontend environment variables must use the `VITE_` prefix, and those values are public in the browser bundle.
 
 Useful backend URLs:
 
@@ -130,6 +178,8 @@ ALERT_MODE=demo
 AUTO_ALERTS_ENABLED=false
 CORS_ORIGINS=https://your-frontend.vercel.app
 GROQ_API_KEY=your_key_here
+HF_MODEL_REPO=your-username/firewatch-yolo
+HF_MODEL_FILENAME=best.pt
 ```
 
 For live Gmail alerts, add the Gmail variables from `.env.example` and keep OAuth files out of git.
@@ -137,7 +187,7 @@ For live Gmail alerts, add the Gmail variables from `.env.example` and keep OAut
 Production notes:
 
 - SQLite and generated detection images are local runtime files. Use persistent storage or a hosted database for anything beyond a demo.
-- Model weights are intentionally not committed. Add them through persistent storage, a release artifact, or another model delivery flow.
+- Model weights are intentionally not committed. Use Hugging Face Hub for `best.pt`, or add persistent storage if you prefer to keep weights on Render.
 - Vite exposes `VITE_*` values in browser code, so do not put secrets in frontend environment variables.
 
 ## Alerts
@@ -149,9 +199,7 @@ Do not configure this project to contact real emergency services.
 ## Checks
 
 ```bash
-npm run lint
-npm run build
-python3 -m compileall fire_backend.py fire_agent.py real_rag_system.py tests
+npm run check
 ```
 
 The scripts in `tests/` are manual integration/demo scripts. They expect the backend to be running and may create local database/image state, so they are not run automatically in CI.
@@ -159,7 +207,9 @@ The scripts in `tests/` are manual integration/demo scripts. They expect the bac
 ## GitHub Hygiene
 
 - Commit source, docs, lockfiles, and small static assets.
+- Keep both root and frontend `package-lock.json` files committed for reproducible installs.
 - Do not commit `.env`, OAuth tokens, credentials, local databases, generated captures, or model weights.
+- Keep local-only files such as `.DS_Store`, `.venv/`, `__pycache__/`, `best.pt`, `fire_system.db`, `detection_images/*`, `model_cache/`, `secrets/`, `local_assets/`, and `local_backup/` out of git.
 - Rotate any credential that was ever committed or shared publicly.
 - Keep live alerting disabled unless you are deliberately testing with verified recipients.
 

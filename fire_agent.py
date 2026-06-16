@@ -38,6 +38,7 @@ SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
 RECEIVER_EMAILS = [email.strip() for email in os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",") if email.strip()]
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
 ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
+GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
 
 def get_shared_rag() -> RealRAGSystem:
     """Load the vector RAG system only when the agent actually needs it."""
@@ -407,8 +408,8 @@ class FireManagementAgent:
                 lon=lon,
             )
         
-        if not os.path.exists('token.json'):
-            return self._json_serialize({"error": "token.json not found."})
+        if not os.path.exists(GOOGLE_TOKEN_FILE):
+            return self._json_serialize({"error": f"{GOOGLE_TOKEN_FILE} not found."})
 
         if not RECEIVER_EMAILS:
             return self._json_serialize({"error": "REMINDER_EMAIL_RECEIVERS is empty."})
@@ -417,7 +418,7 @@ class FireManagementAgent:
         html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning, lat=lat, lon=lon)
         
         try:
-            creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/gmail.send'])
+            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, ['https://www.googleapis.com/auth/gmail.send'])
             service = build('gmail', 'v1', credentials=creds)
             
             message = MIMEMultipart()
