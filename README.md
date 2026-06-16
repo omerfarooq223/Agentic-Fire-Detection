@@ -124,6 +124,8 @@ For deployment, the backend can download weights from Hugging Face Hub instead:
 ```env
 HF_MODEL_REPO=your-username/firewatch-yolo
 HF_MODEL_FILENAME=best.pt
+HF_SEG_MODEL_REPO=your-username/firewatch-seg
+HF_SEG_MODEL_FILENAME=best.pt
 HF_TOKEN=your_read_token_for_private_repos
 ```
 
@@ -189,6 +191,7 @@ Production notes:
 
 - SQLite and generated detection images are local runtime files. Use persistent storage or a hosted database for anything beyond a demo.
 - Model weights are intentionally not committed. Use Hugging Face Hub for `best.pt`, or add persistent storage if you prefer to keep weights on Render.
+- The frontend does not need any change for model hosting. Only backend environment variables change.
 - Vite exposes `VITE_*` values in browser code, so do not put secrets in frontend environment variables.
 
 ## Alerts

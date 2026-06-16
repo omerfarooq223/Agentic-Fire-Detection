@@ -34,12 +34,14 @@ The backend expects these Render environment variables:
 ```env
 HF_MODEL_REPO=your-username/firewatch-yolo
 HF_MODEL_FILENAME=best.pt
+HF_SEG_MODEL_REPO=your-username/firewatch-seg
+HF_SEG_MODEL_FILENAME=best.pt
 HF_TOKEN=your_read_token_only_if_private
 ```
 
 Do not commit `best.pt` to GitHub.
 
-The committed backend supports these variables directly. If `FIRE_DETECT_MODEL` is missing on Render and `HF_MODEL_REPO` is set, the backend downloads `HF_MODEL_FILENAME` from Hugging Face Hub at startup/first model load.
+The committed backend supports these variables directly. If `FIRE_DETECT_MODEL` is missing on Render and `HF_MODEL_REPO` is set, the backend downloads `HF_MODEL_FILENAME` from Hugging Face Hub at startup or first model load. If the local segmentation weights or zip file are missing and `HF_SEG_MODEL_REPO` is set, the backend downloads `HF_SEG_MODEL_FILENAME` for the segmentation model too.
 
 ## 2. Deploy Backend On Render
 
@@ -61,6 +63,8 @@ AUTO_ALERTS_ENABLED=false
 CORS_ORIGINS=https://your-frontend.vercel.app
 HF_MODEL_REPO=your-username/firewatch-yolo
 HF_MODEL_FILENAME=best.pt
+HF_SEG_MODEL_REPO=your-username/firewatch-seg
+HF_SEG_MODEL_FILENAME=best.pt
 GROQ_API_KEY=optional_for_rag_answers
 ```
 

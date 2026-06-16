@@ -58,6 +58,8 @@ SEG_WEIGHTS_PT = PROJECT_ROOT / "models" / "fire_seg" / "weights" / "best.pt"
 DEFAULT_DETECT_PT = PROJECT_ROOT / "best.pt"
 HF_MODEL_REPO = os.getenv("HF_MODEL_REPO", "").strip()
 HF_MODEL_FILENAME = os.getenv("HF_MODEL_FILENAME", "best.pt").strip() or "best.pt"
+HF_SEG_MODEL_REPO = os.getenv("HF_SEG_MODEL_REPO", "").strip()
+HF_SEG_MODEL_FILENAME = os.getenv("HF_SEG_MODEL_FILENAME", "best.pt").strip() or "best.pt"
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
 HF_MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
 GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
@@ -406,13 +408,28 @@ def detect_fire_bbox_bgr(frame_bgr: np.ndarray):
 
 
 def ensure_segmentation_weights() -> Path:
-    """Extract weights/best.pt from fire_seg_final_results.zip if needed."""
+    """Resolve YOLO segmentation weights from local files, zip, or Hugging Face."""
     if SEG_WEIGHTS_PT.is_file():
         return SEG_WEIGHTS_PT
+    if HF_SEG_MODEL_REPO:
+        try:
+            return Path(
+                hf_hub_download(
+                    repo_id=HF_SEG_MODEL_REPO,
+                    filename=HF_SEG_MODEL_FILENAME,
+                    token=HF_TOKEN,
+                    cache_dir=str(HF_MODEL_CACHE_DIR),
+                )
+            )
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"Could not download segmentation weights from Hugging Face repo "
+                f"'{HF_SEG_MODEL_REPO}': {exc}"
+            ) from exc
     if not SEG_RESULTS_ZIP.is_file():
         raise FileNotFoundError(
             f"Segmentation model not found. Place {SEG_RESULTS_ZIP.name} in {PROJECT_ROOT} "
-            f"or extract weights to {SEG_WEIGHTS_PT}"
+            f"or extract weights to {SEG_WEIGHTS_PT} or set HF_SEG_MODEL_REPO."
         )
     SEG_WEIGHTS_PT.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(SEG_RESULTS_ZIP, "r") as zf:
