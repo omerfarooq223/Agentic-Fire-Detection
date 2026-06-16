@@ -8,6 +8,10 @@ import {
   Flame,
   Loader2,
   Mail,
+  PhoneCall,
+  GitBranch,
+  ExternalLink,
+  X,
   Send,
   Shield,
   Upload,
@@ -18,6 +22,8 @@ import DetectionOverlay from './overlay-enhanced'
 import './index.css'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+const GITHUB_REPO_URL = 'https://github.com/omerfarooq223/Agentic-Fire-Detection'
+const PORTFOLIO_URL = 'https://omerfarooq223.github.io'
 
 // ── Utility Functions ──
 function nearestFrame(frames, t) {
@@ -53,11 +59,16 @@ function nearestFrame(frames, t) {
 
 
 // ── Subcomponents ──
-function BrandHeader() {
+function BrandHeader({ onProfileOpen }) {
   return (
     <div className="brand-header">
-      <h1 className="brand-title">FireWatch AI</h1>
-      <p className="brand-subtitle">Advanced Smoke & Fire Detection System</p>
+      <div>
+        <h1 className="brand-title">FireWatch AI</h1>
+        <p className="brand-subtitle">Advanced Smoke & Fire Detection System</p>
+      </div>
+      <button className="profile-trigger" type="button" onClick={onProfileOpen} aria-label="Open developer profile">
+        UF
+      </button>
     </div>
   )
 }
@@ -70,6 +81,37 @@ function CreditFooter() {
         Muhammad Umar Farooq
       </a>
     </footer>
+  )
+}
+
+function ProfileModal({ open, onClose }) {
+  if (!open) return null
+
+  return (
+    <div className="profile-modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="profile-card" role="dialog" aria-modal="true" aria-labelledby="profile-title" onClick={(event) => event.stopPropagation()}>
+        <button className="profile-close" type="button" onClick={onClose} aria-label="Close developer profile">
+          <X size={26} />
+        </button>
+        <div className="profile-top-accent" />
+        <div className="profile-avatar">UF</div>
+        <h2 id="profile-title">Muhammad Umar Farooq</h2>
+        <p className="profile-role">AI Engineer</p>
+        <div className="profile-info">
+          <strong>Department of Artificial Intelligence</strong>
+          <span>University of Management and Technology</span>
+          <span>Lahore, Pakistan</span>
+        </div>
+        <a className="profile-link profile-link-github" href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
+          <GitBranch size={24} />
+          <span>GitHub Repository</span>
+        </a>
+        <a className="profile-link profile-link-portfolio" href={PORTFOLIO_URL} target="_blank" rel="noreferrer">
+          <ExternalLink size={24} />
+          <span>Visit Developer Portfolio</span>
+        </a>
+      </section>
+    </div>
   )
 }
 
@@ -291,10 +333,12 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
   const getStatusText = (kind, state) => {
     if (state === 'sending') {
       if (kind === 'sms') return 'PREPARING ALERTS...'
+      if (kind === 'call') return 'PREPARING CALL...'
       return 'ACTIVATING...'
     }
     if (state === 'sent') {
       if (kind === 'sms') return 'ALERTS PREPARED'
+      if (kind === 'call') return 'CALL DEMO READY'
       return 'SYSTEM ACTIVE'
     }
     return 'SYSTEM READY'
@@ -304,6 +348,7 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
     const size = 20
     if (state === 'sending') return <Loader2 size={size} className="spin" />
     if (kind === 'sms') return <Mail size={size} />
+    if (kind === 'call') return <PhoneCall size={size} />
     return <BellRing size={size} />
   }
 
@@ -337,6 +382,19 @@ function ResponsePanel({ metrics, level, responseState, onTriggerResponse }) {
         </button>
 
         <button
+          className={`response-btn ${responseState.call}`}
+          onClick={() => onTriggerResponse('call', 'Emergency Call Demo Prepared', 'Demo call workflow prepared. No real phone call was placed.', 1800)}
+          disabled={responseState.call !== 'idle'}
+        >
+          <div className="btn-icon">{getIcon('call', responseState.call)}</div>
+          <div className="btn-content">
+            <span className="btn-label">EMERGENCY CALL</span>
+            <strong className="btn-status">{getStatusText('call', responseState.call)}</strong>
+          </div>
+          {responseState.call === 'sending' && <div className="btn-glow" />}
+        </button>
+
+        <button
           className={`response-btn ${responseState.sprinkler}`}
           onClick={() => onTriggerResponse('sprinkler', 'Sprinkler System Activated', 'Fire suppression system is now active in the affected zones.', 1600)}
           disabled={responseState.sprinkler !== 'idle'}
@@ -360,6 +418,7 @@ function NotificationStack({ notifications, onDismiss }) {
         <div key={n.id} className={`notification-item ${n.type}`} onClick={() => onDismiss(n.id)}>
           <div className="notification-icon">
             {n.kind === 'sms' && <Mail size={18} />}
+            {n.kind === 'call' && <PhoneCall size={18} />}
             {n.kind === 'sprinkler' && <BellRing size={18} />}
             {!n.kind && <AlertTriangle size={18} />}
           </div>
@@ -463,13 +522,14 @@ function App() {
   const [exporting, setExporting] = useState(false)
   const [err, setErr] = useState(null)
   const [notifications, setNotifications] = useState([])
-  const [responseState, setResponseState] = useState({ sms: 'idle', sprinkler: 'idle' })
+  const [responseState, setResponseState] = useState({ sms: 'idle', call: 'idle', sprinkler: 'idle' })
   const [ragQ, setRagQ] = useState('')
   const [chatHistory, setChatHistory] = useState([])
   const [ragBusy, setRagBusy] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatFull, setChatFull] = useState(false)
   const [health, setHealth] = useState(null)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const addNotification = useCallback((kind, title, message, type = 'info') => {
     const id = Math.random().toString(36).substr(2, 9)
@@ -547,6 +607,9 @@ function App() {
     if (metrics.risk > 50) {
       if (responseState.sms === 'idle') {
         triggerResponse('sms', 'AUTOTRIGGER: Risk level > 50. Preparing alerts.', 'AUTOTRIGGER: Alerts prepared.', 1400)
+      }
+      if (responseState.call === 'idle') {
+        triggerResponse('call', 'AUTOTRIGGER: Emergency call demo prepared.', 'AUTOTRIGGER: Demo call workflow prepared. No real phone call was placed.', 1800)
       }
       if (responseState.sprinkler === 'idle') {
         triggerResponse('sprinkler', 'AUTOTRIGGER: Risk level > 50. Activating sprinklers.', 'AUTOTRIGGER: Sprinklers active.', 1600)
@@ -831,7 +894,8 @@ function App() {
   return (
     <div className="hud-root">
       <NotificationStack notifications={notifications} onDismiss={dismissNotification} />
-      <BrandHeader />
+      <BrandHeader onProfileOpen={() => setProfileOpen(true)} />
+      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       <StatusBar online={online} metrics={metrics} level={level} alertConfig={health?.alerts} />
 
 

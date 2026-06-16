@@ -76,6 +76,10 @@ body {
   padding: 1.5rem 0 0.5rem;
   text-align: left;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
 .brand-title {
@@ -109,6 +113,179 @@ body {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: shine 6s linear infinite;
+}
+
+.profile-trigger {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 217, 255, 0.7);
+  background: linear-gradient(135deg, #27f0ff 0%, #38a8ff 100%);
+  color: #07111f;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 0 20px rgba(0, 217, 255, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  flex: 0 0 auto;
+}
+
+.profile-trigger:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 0 30px rgba(0, 217, 255, 0.58), 0 10px 26px rgba(56, 168, 255, 0.2);
+}
+
+.profile-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(2, 6, 15, 0.76);
+  backdrop-filter: blur(12px);
+}
+
+.profile-card {
+  width: min(92vw, 520px);
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid rgba(0, 217, 255, 0.48);
+  background: linear-gradient(145deg, rgba(14, 21, 37, 0.98), rgba(10, 16, 29, 0.98));
+  box-shadow: 0 0 46px rgba(0, 217, 255, 0.18), 0 28px 80px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  padding: 4.7rem 2.8rem 2.8rem;
+  text-align: center;
+  overflow: hidden;
+}
+
+.profile-top-accent {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 180px;
+  height: 8px;
+  transform: translateX(-50%);
+  border-radius: 0 0 10px 10px;
+  background: linear-gradient(90deg, #27f0ff, #38a8ff);
+  box-shadow: 0 0 18px rgba(0, 217, 255, 0.45);
+}
+
+.profile-close {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.3rem;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(203, 213, 225, 0.75);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.profile-close:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.profile-avatar {
+  width: 126px;
+  height: 126px;
+  margin: 0 auto 2rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 3px solid rgba(103, 232, 249, 0.55);
+  background: linear-gradient(135deg, #28edff 0%, #42aaff 100%);
+  color: #06111f;
+  font-family: 'Outfit', sans-serif;
+  font-size: 3rem;
+  font-weight: 900;
+  box-shadow: 0 0 36px rgba(0, 217, 255, 0.5);
+}
+
+.profile-card h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(2rem, 5vw, 2.65rem);
+  font-weight: 900;
+}
+
+.profile-role {
+  margin: 1rem 0 2rem;
+  color: var(--accent-cyan);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.profile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 2rem;
+  padding: 1.6rem;
+  border-radius: 18px;
+  background: rgba(4, 8, 18, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  color: var(--text-secondary);
+  font-size: 1.08rem;
+}
+
+.profile-info strong {
+  color: var(--text-secondary);
+  font-size: 1.08rem;
+}
+
+.profile-link {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  border-radius: 14px;
+  text-decoration: none;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 800;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.profile-link + .profile-link {
+  margin-top: 1rem;
+}
+
+.profile-link:hover {
+  transform: translateY(-2px);
+}
+
+.profile-link-github {
+  color: white;
+  background: rgba(30, 41, 59, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.profile-link-github:hover {
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.3);
+}
+
+.profile-link-portfolio {
+  color: var(--accent-cyan);
+  background: rgba(0, 217, 255, 0.1);
+  border: 1px solid rgba(0, 217, 255, 0.52);
+}
+
+.profile-link-portfolio:hover {
+  box-shadow: 0 0 26px rgba(0, 217, 255, 0.2);
 }
 
 @keyframes shine {
@@ -1568,12 +1745,40 @@ body {
     gap: 0.75rem;
   }
 
+  .brand-header {
+    align-items: flex-start;
+  }
+
+  .brand-title {
+    font-size: 2.15rem;
+  }
+
+  .brand-subtitle {
+    font-size: 0.68rem;
+    letter-spacing: 0.24em;
+  }
+
   .chip strong {
     font-size: 1rem;
   }
 
   .radar-panel {
     min-height: 300px;
+  }
+
+  .profile-card {
+    padding: 4rem 1.3rem 1.5rem;
+  }
+
+  .profile-avatar {
+    width: 104px;
+    height: 104px;
+    font-size: 2.45rem;
+  }
+
+  .profile-info {
+    font-size: 0.98rem;
+    padding: 1.2rem;
   }
 }
 /* ── Floating AI Assistant ── */

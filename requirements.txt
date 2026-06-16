@@ -11,8 +11,11 @@ pillow>=10.2.0
 numpy>=1.26.0
 
 # Deep Learning & Computer Vision
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1+cpu
+torchvision==0.18.1+cpu
 ultralytics>=8.1.0
-opencv-python>=4.9.0
+opencv-python-headless>=4.9.0
 
 # Agentic RAG System
 sentence-transformers>=2.5.0
