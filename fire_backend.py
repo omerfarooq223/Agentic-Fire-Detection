@@ -352,26 +352,22 @@ async def startup():
     else:
         print(f"✅ Gmail API token detected at {GOOGLE_TOKEN_FILE}.")
         
-    # 3. Eagerly load YOLO Detection Model
-    print("⏳ Loading YOLO detection model...")
-    try:
-        det_model = get_yolo_det()
-        if det_model is not None:
-            print(f"✅ YOLO detection model loaded successfully.")
-        else:
-            print(f"⚠️  YOLO detection model not available (no weights found and no HF_MODEL_REPO set).")
-    except Exception as e:
-        print(f"❌ Failed to load YOLO detection model: {e}")
+    # 3. Check YOLO Weights (lazy-loaded on first detection to stay within 512MB RAM)
+    if DEFAULT_DETECT_PT.is_file():
+        print(f"✅ YOLO detection weights found at {DEFAULT_DETECT_PT} (will load on first detection).")
+    elif HF_MODEL_REPO:
+        print(f"ℹ️  YOLO detection weights will be downloaded from '{HF_MODEL_REPO}' on first detection.")
+    else:
+        print(f"⚠️  WARNING: No YOLO detection weights found. Set HF_MODEL_REPO for hosted weights.")
 
-    # 4. Eagerly load YOLO Segmentation Model
-    print("⏳ Loading YOLO segmentation model...")
-    try:
-        seg_model = get_yolo_seg()
-        print(f"✅ YOLO segmentation model loaded successfully.")
-    except Exception as e:
-        print(f"❌ Failed to load YOLO segmentation model: {e}")
+    if SEG_WEIGHTS_PT.is_file():
+        print(f"✅ YOLO segmentation weights found (will load on first detection).")
+    elif HF_SEG_MODEL_REPO:
+        print(f"ℹ️  YOLO segmentation weights will be downloaded from '{HF_SEG_MODEL_REPO}' on first detection.")
+    else:
+        print(f"ℹ️  YOLO segmentation weights not pre-loaded (will resolve from zip/HF on first use).")
 
-    # 5. Eagerly initialize RAG System
+    # 4. Eagerly initialize RAG System (lightweight)
     print("⏳ Initializing RAG system...")
     try:
         rag = get_rag_system()
@@ -379,7 +375,7 @@ async def startup():
     except Exception as e:
         print(f"❌ Failed to initialize RAG system: {e}")
 
-    # 6. Eagerly initialize Fire Management Agent
+    # 5. Eagerly initialize Fire Management Agent (lightweight)
     print("⏳ Initializing Fire Management Agent...")
     try:
         agent = get_fire_agent()
@@ -527,8 +523,10 @@ def ensure_segmentation_weights() -> Path:
 def get_yolo_seg():
     global _yolo_seg
     if _yolo_seg is None:
+        print("⏳ Loading YOLO segmentation model (first use)...")
         wpath = ensure_segmentation_weights()
         _yolo_seg = YOLO(str(wpath))
+        print("✅ YOLO segmentation model loaded.")
     return _yolo_seg
 
 
@@ -565,7 +563,9 @@ def get_yolo_det() -> Optional[Any]:
             return None
     except OSError:
         pass
+    print(f"⏳ Loading YOLO detection model from {path} (first use)...")
     _yolo_det = YOLO(str(path))
+    print("✅ YOLO detection model loaded.")
     return _yolo_det
 
 
