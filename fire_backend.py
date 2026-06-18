@@ -352,13 +352,42 @@ async def startup():
     else:
         print(f"✅ Gmail API token detected at {GOOGLE_TOKEN_FILE}.")
         
-    # 3. Check YOLO Weights
-    if DEFAULT_DETECT_PT.is_file():
-        print(f"✅ YOLO Weights detected at {DEFAULT_DETECT_PT}.")
-    elif HF_MODEL_REPO:
-        print(f"ℹ️  YOLO weights will be downloaded from Hugging Face repo '{HF_MODEL_REPO}'.")
-    else:
-        print(f"⚠️  WARNING: YOLO weights not found at {DEFAULT_DETECT_PT}. Set FIRE_DETECT_MODEL or HF_MODEL_REPO for hosted weights.")
+    # 3. Eagerly load YOLO Detection Model
+    print("⏳ Loading YOLO detection model...")
+    try:
+        det_model = get_yolo_det()
+        if det_model is not None:
+            print(f"✅ YOLO detection model loaded successfully.")
+        else:
+            print(f"⚠️  YOLO detection model not available (no weights found and no HF_MODEL_REPO set).")
+    except Exception as e:
+        print(f"❌ Failed to load YOLO detection model: {e}")
+
+    # 4. Eagerly load YOLO Segmentation Model
+    print("⏳ Loading YOLO segmentation model...")
+    try:
+        seg_model = get_yolo_seg()
+        print(f"✅ YOLO segmentation model loaded successfully.")
+    except Exception as e:
+        print(f"❌ Failed to load YOLO segmentation model: {e}")
+
+    # 5. Eagerly initialize RAG System
+    print("⏳ Initializing RAG system...")
+    try:
+        rag = get_rag_system()
+        print(f"✅ RAG system initialized successfully.")
+    except Exception as e:
+        print(f"❌ Failed to initialize RAG system: {e}")
+
+    # 6. Eagerly initialize Fire Management Agent
+    print("⏳ Initializing Fire Management Agent...")
+    try:
+        agent = get_fire_agent()
+        print(f"✅ Fire Management Agent initialized successfully.")
+    except Exception as e:
+        print(f"❌ Failed to initialize Fire Management Agent: {e}")
+
+    print("🚀 Startup complete — all systems checked.")
 
 
 # ============= UTILITY FUNCTIONS =============
