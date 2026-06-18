@@ -29,7 +29,6 @@ from typing import Any, Optional
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 from real_rag_system import RealRAGSystem
 from fire_agent import FireManagementAgent
 import requests
@@ -355,20 +354,24 @@ async def startup():
     else:
         print(f"✅ Gmail API token detected at {GOOGLE_TOKEN_FILE}.")
         
-    # 3. Check YOLO Weights (lazy-loaded on first detection to stay within 512MB RAM)
-    if DEFAULT_DETECT_PT.is_file():
-        print(f"✅ YOLO detection weights found at {DEFAULT_DETECT_PT} (will load on first detection).")
-    elif HF_MODEL_REPO:
-        print(f"ℹ️  YOLO detection weights will be downloaded from '{HF_MODEL_REPO}' on first detection.")
+    # 3. Check inference routing.
+    if remote_inference_enabled():
+        print(f"✅ Remote YOLO inference enabled: {INFERENCE_SERVICE_URL or 'INFERENCE_SERVICE_URL missing'}")
     else:
-        print(f"⚠️  WARNING: No YOLO detection weights found. Set HF_MODEL_REPO for hosted weights.")
+        print("ℹ️  Local YOLO inference mode enabled.")
+        if DEFAULT_DETECT_PT.is_file():
+            print(f"✅ YOLO detection weights found at {DEFAULT_DETECT_PT} (will load on first detection).")
+        elif HF_MODEL_REPO:
+            print(f"ℹ️  YOLO detection weights will be downloaded from '{HF_MODEL_REPO}' on first detection.")
+        else:
+            print(f"⚠️  WARNING: No YOLO detection weights found. Set HF_MODEL_REPO for hosted weights.")
 
-    if SEG_WEIGHTS_PT.is_file():
-        print(f"✅ YOLO segmentation weights found (will load on first detection).")
-    elif HF_SEG_MODEL_REPO:
-        print(f"ℹ️  YOLO segmentation weights will be downloaded from '{HF_SEG_MODEL_REPO}' on first detection.")
-    else:
-        print(f"ℹ️  YOLO segmentation weights not pre-loaded (will resolve from zip/HF on first use).")
+        if SEG_WEIGHTS_PT.is_file():
+            print(f"✅ YOLO segmentation weights found (will load on first detection).")
+        elif HF_SEG_MODEL_REPO:
+            print(f"ℹ️  YOLO segmentation weights will be downloaded from '{HF_SEG_MODEL_REPO}' on first detection.")
+        else:
+            print(f"ℹ️  YOLO segmentation weights not pre-loaded (will resolve from zip/HF on first use).")
 
     # 4. Eagerly initialize RAG System (lightweight)
     print("⏳ Initializing RAG system...")
@@ -523,12 +526,19 @@ def ensure_segmentation_weights() -> Path:
     return SEG_WEIGHTS_PT
 
 
+def get_yolo_class():
+    """Import Ultralytics only when local inference actually needs it."""
+    from ultralytics import YOLO
+
+    return YOLO
+
+
 def get_yolo_seg():
     global _yolo_seg
     if _yolo_seg is None:
         print("⏳ Loading YOLO segmentation model (first use)...")
         wpath = ensure_segmentation_weights()
-        _yolo_seg = YOLO(str(wpath))
+        _yolo_seg = get_yolo_class()(str(wpath))
         print("✅ YOLO segmentation model loaded.")
     return _yolo_seg
 
@@ -567,7 +577,7 @@ def get_yolo_det() -> Optional[Any]:
     except OSError:
         pass
     print(f"⏳ Loading YOLO detection model from {path} (first use)...")
-    _yolo_det = YOLO(str(path))
+    _yolo_det = get_yolo_class()(str(path))
     print("✅ YOLO detection model loaded.")
     return _yolo_det
 
@@ -2129,6 +2139,12 @@ def health_check():
             "auto_enabled": AUTO_ALERTS_ENABLED,
             "confirmation_frames": ALERT_CONFIRMATION_FRAMES,
             "cooldown_seconds": ALERT_COOLDOWN_SECONDS,
+        },
+        "inference": {
+            "mode": INFERENCE_MODE,
+            "remote_enabled": remote_inference_enabled(),
+            "service_url": INFERENCE_SERVICE_URL,
+            "timeout_seconds": REMOTE_INFERENCE_TIMEOUT_SECONDS,
         },
         "cors_origins": CORS_ORIGINS,
     }
