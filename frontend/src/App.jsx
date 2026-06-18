@@ -31,7 +31,10 @@ import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAx
 import DetectionOverlay from './overlay-enhanced'
 import './index.css'
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+const DEFAULT_BACKEND_URL = import.meta.env.DEV
+  ? 'http://localhost:8000'
+  : 'https://agentic-fire-detection.onrender.com'
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '')
 const GITHUB_REPO_URL = 'https://github.com/omerfarooq223/Agentic-Fire-Detection'
 const PORTFOLIO_URL = 'https://omerfarooq223.github.io'
 const HUGGING_FACE_URL = 'https://huggingface.co/omerfarooq223/FireWatch-AI'
