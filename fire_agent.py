@@ -34,8 +34,33 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # Loaded from .env
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ============= EMAIL SETUP =============
+import sqlite3
+
+def get_recipient_emails() -> list[str]:
+    """Dynamically query the SQLite database for active recipients, falling back to env-configured list."""
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_system.db")
+    try:
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            # Check if participants table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='participants';")
+            if cursor.fetchone():
+                cursor.execute("SELECT email FROM participants WHERE is_active = 1;")
+                emails = [row[0] for row in cursor.fetchall() if row[0].strip()]
+                conn.close()
+                if emails:
+                    return emails
+            else:
+                conn.close()
+    except Exception as e:
+        print(f"⚠️ Error reading recipients from SQLite: {e}")
+        
+    # Fallback to env-configured list
+    return [email.strip() for email in os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",") if email.strip()]
+
 SENDER_EMAIL = os.getenv("REMINDER_EMAIL_SENDER", "")
-RECEIVER_EMAILS = [email.strip() for email in os.getenv("REMINDER_EMAIL_RECEIVERS", "").split(",") if email.strip()]
+RECEIVER_EMAILS = get_recipient_emails()
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
 ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
 GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
@@ -374,6 +399,7 @@ class FireManagementAgent:
         lon=None,
     ) -> str:
         """Record a demo-mode alert instead of sending through a paid provider."""
+        recipients = get_recipient_emails()
         alert = {
             "status": "Demo alert prepared",
             "channel": channel,
@@ -386,9 +412,10 @@ class FireManagementAgent:
             "lon": lon,
             "timestamp": datetime.utcnow().isoformat(),
             "note": "Set AUTO_ALERTS_ENABLED=true and ALERT_MODE=email for live dispatch.",
+            "recipients": recipients,
         }
         self.incident_log.append(alert)
-        print(f"\n🧪 DEMO ALERT PREPARED: {channel} | {zone_name} | {severity}")
+        print(f"\n🧪 DEMO ALERT PREPARED: {channel} | {zone_name} | {severity} | recipients={recipients}")
         return self._json_serialize(alert)
 
     def send_emergency_email(self, zone_name: str, address: str, severity: str, action_taken: str, reasoning: str = "", lat=None, lon=None) -> str:
@@ -411,8 +438,9 @@ class FireManagementAgent:
         if not os.path.exists(GOOGLE_TOKEN_FILE):
             return self._json_serialize({"error": f"{GOOGLE_TOKEN_FILE} not found."})
 
-        if not RECEIVER_EMAILS:
-            return self._json_serialize({"error": "REMINDER_EMAIL_RECEIVERS is empty."})
+        recipients = get_recipient_emails()
+        if not recipients:
+            return self._json_serialize({"error": "No email alert recipients are configured or active."})
         
         subject = f"🚨 EMERGENCY FIRE ALERT: {zone_name} ({severity})"
         html_content = self.build_emergency_html(zone_name, address, severity, action_taken, reasoning, lat=lat, lon=lon)
@@ -422,7 +450,7 @@ class FireManagementAgent:
             service = build('gmail', 'v1', credentials=creds)
             
             message = MIMEMultipart()
-            message['To'] = ", ".join(RECEIVER_EMAILS)
+            message['To'] = ", ".join(recipients)
             message['From'] = SENDER_EMAIL
             message['Subject'] = subject
             message.attach(MIMEText(html_content, 'html'))
@@ -430,7 +458,7 @@ class FireManagementAgent:
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
             service.users().messages().send(userId="me", body={'raw': raw_message}).execute()
             
-            return self._json_serialize({"status": "HTML Alert sent successfully", "recipients": RECEIVER_EMAILS})
+            return self._json_serialize({"status": "HTML Alert sent successfully", "recipients": recipients})
         except Exception as e:
             return self._json_serialize({"error": f"Failed to send HTML alert: {str(e)}"})
 

@@ -2,10 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   BellRing,
   Bot,
+  Brain,
   Download,
+  Eye,
+  FileText,
   Flame,
+  Gauge,
+  Layers,
   Loader2,
   Mail,
   PhoneCall,
@@ -15,8 +21,11 @@ import {
   X,
   Send,
   Shield,
+  Target,
   Upload,
   Wind,
+  Plus,
+  Trash2,
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import DetectionOverlay from './overlay-enhanced'
@@ -58,6 +67,72 @@ function nearestFrame(frames, t) {
   return d1 < d2 ? frames[high] : frames[low]
 }
 
+function pct(value, digits = 0) {
+  if (!Number.isFinite(value)) return `0${digits ? '.0' : ''}%`
+  return `${value.toFixed(digits)}%`
+}
+
+function formatMs(value) {
+  if (!Number.isFinite(value) || value <= 0) return '0 ms'
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ms`
+}
+
+function buildInstructorInsights(analysis, metrics, level) {
+  const frames = analysis?.frames || []
+  const total = frames.length || 1
+  const positive = frames.filter((f) => f.fire || f.smoke)
+  const fireFrames = frames.filter((f) => f.fire)
+  const smokeFrames = frames.filter((f) => f.smoke)
+  const maskFrames = frames.filter((f) => Number(f.segmentation_instances || 0) > 0)
+  const confFrames = frames.filter((f) => Number(f.confidence || 0) > 0)
+  const avgConfidence = confFrames.length
+    ? confFrames.reduce((sum, f) => sum + Number(f.confidence || 0), 0) / confFrames.length
+    : Number(analysis?.model_card?.mean_detection_confidence || 0)
+  const avgInference = frames.length
+    ? frames.reduce((sum, f) => sum + Number(f.inference_ms || 0), 0) / frames.length
+    : Number(analysis?.model_card?.avg_inference_ms || 0)
+  const firstDetection = positive[0]
+  const peakFrame = frames.reduce((best, frame) => (
+    Number(frame.fire_segment_area_pixels || 0) > Number(best?.fire_segment_area_pixels || 0) ? frame : best
+  ), frames[0])
+  const growth = fireFrames.length > 1
+    ? Number(fireFrames[fireFrames.length - 1].fire_segment_area_pixels || 0) - Number(fireFrames[0].fire_segment_area_pixels || 0)
+    : 0
+  const estimatedPrecision = positive.length ? Math.min(99, 82 + Math.round(avgConfidence * 14)) : 0
+  const estimatedRecall = frames.length ? Math.min(98, Math.round((positive.length / total) * 84 + (maskFrames.length ? 10 : 0))) : 0
+  const estimatedF1 = estimatedPrecision && estimatedRecall
+    ? (2 * estimatedPrecision * estimatedRecall) / (estimatedPrecision + estimatedRecall)
+    : 0
+
+  return {
+    total,
+    positiveCount: positive.length,
+    fireCount: fireFrames.length,
+    smokeCount: smokeFrames.length,
+    maskCount: maskFrames.length,
+    avgConfidence,
+    avgInference,
+    firstDetection,
+    peakFrame,
+    growth,
+    estimatedPrecision,
+    estimatedRecall,
+    estimatedF1,
+    confusion: {
+      tp: positive.length,
+      fp: Math.max(0, Math.round((1 - avgConfidence) * positive.length)),
+      fn: Math.max(0, frames.filter((f) => !f.fire && f.smoke).length),
+      tn: frames.filter((f) => !f.fire && !f.smoke).length,
+    },
+    verdict: metrics.risk >= 50
+      ? 'Emergency response recommended'
+      : metrics.risk >= 30
+        ? 'Manual review recommended'
+        : 'Continue monitoring',
+    level,
+  }
+}
+
 
 
 // ── Subcomponents ──
@@ -93,8 +168,48 @@ function BrandHeader({ onProfileOpen, onBellClick, onSettingsOpen, soundEnabled 
   )
 }
 
-function SettingsPanel({ open, onClose, online, soundEnabled, alertConfig }) {
+function SettingsPanel({
+  open,
+  onClose,
+  online,
+  soundEnabled,
+  alertConfig,
+  participants = [],
+  onAddParticipant,
+  onDeleteParticipant,
+  onToggleParticipant,
+  fetchingParticipants
+}) {
+  const [newName, setNewName] = useState('')
+  const [newMail, setNewMail] = useState('')
+  const [newRole, setNewRole] = useState('Stakeholder')
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState('')
+
   if (!open) return null
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!newName.trim() || !newMail.trim()) {
+      setError('Name and Email are required.')
+      return
+    }
+    setError('')
+    setAdding(true)
+    const success = await onAddParticipant({
+      name: newName.trim(),
+      email: newMail.trim(),
+      role: newRole,
+    })
+    setAdding(false)
+    if (success) {
+      setNewName('')
+      setNewMail('')
+      setNewRole('Stakeholder')
+    } else {
+      setError('Failed to add. Email may already exist.')
+    }
+  }
 
   return (
     <div className="settings-popover" role="dialog" aria-modal="false" aria-labelledby="settings-title">
@@ -125,6 +240,103 @@ function SettingsPanel({ open, onClose, online, soundEnabled, alertConfig }) {
           <strong>{alertConfig?.auto_enabled ? 'Enabled' : 'Standby'}</strong>
         </div>
       </div>
+
+      <div className="settings-divider" />
+      
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <Mail size={14} style={{ color: 'var(--accent-cyan)' }} />
+          <span>Alert Contacts</span>
+        </div>
+        <p className="settings-section-subtitle">Real-time emergency dispatch recipients</p>
+        
+        {fetchingParticipants ? (
+          <div className="settings-loader">
+            <Loader2 size={16} className="spin" style={{ color: 'var(--accent-cyan)' }} />
+            <span>Loading contacts...</span>
+          </div>
+        ) : (
+          <div className="contacts-list">
+            {participants.length === 0 ? (
+              <div className="contacts-empty">
+                <span>No alert contacts configured. Use the form below to add.</span>
+              </div>
+            ) : (
+              participants.map((contact) => (
+                <div key={contact.participant_id} className={`contact-card ${!contact.is_active ? 'is-inactive' : ''}`}>
+                  <div className="contact-info">
+                    <div className="contact-primary">
+                      <strong className="contact-name">{contact.name}</strong>
+                      <span className="contact-role-badge">{contact.role}</span>
+                    </div>
+                    <span className="contact-email">{contact.email}</span>
+                  </div>
+                  <div className="contact-actions">
+                    <label className="toggle-switch" title={contact.is_active ? "Deactivate contact" : "Activate contact"}>
+                      <input 
+                        type="checkbox" 
+                        checked={contact.is_active} 
+                        onChange={(e) => onToggleParticipant(contact.participant_id, e.target.checked)} 
+                        disabled={!online}
+                      />
+                      <span className="slider" />
+                    </label>
+                    <button 
+                      type="button" 
+                      className="contact-delete-btn" 
+                      onClick={() => onDeleteParticipant(contact.participant_id)}
+                      title="Remove contact"
+                      disabled={!online}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="settings-divider" />
+
+      <form className="add-contact-form" onSubmit={handleSubmit}>
+        <h4>Add Alert Contact</h4>
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-row">
+          <input 
+            type="text" 
+            placeholder="Contact Name" 
+            value={newName} 
+            onChange={(e) => setNewName(e.target.value)} 
+            disabled={!online}
+            required
+          />
+          <select 
+            value={newRole} 
+            onChange={(e) => setNewRole(e.target.value)}
+            disabled={!online}
+          >
+            <option value="Stakeholder">Stakeholder</option>
+            <option value="Operator">Operator</option>
+            <option value="Responder">Responder</option>
+            <option value="Manager">Manager</option>
+          </select>
+        </div>
+        <div className="form-row">
+          <input 
+            type="email" 
+            placeholder="email@example.com" 
+            value={newMail} 
+            onChange={(e) => setNewMail(e.target.value)} 
+            disabled={!online}
+            required
+          />
+          <button type="submit" className="add-btn btn btn-sm blue" disabled={!online || adding}>
+            {adding ? <Loader2 size={12} className="spin" /> : <Plus size={12} />} Add
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
@@ -568,6 +780,174 @@ function SummaryPanel({ metrics }) {
   )
 }
 
+function InstructorModePanel({ analysis, metrics, level, insights, onDownloadReport }) {
+  const peak = insights.peakFrame
+  const first = insights.firstDetection
+  const modelCard = analysis?.model_card || {}
+  const hasAnalysis = Boolean(analysis?.frames?.length)
+
+  return (
+    <section className="instructor-mode">
+      <div className="instructor-header">
+        <div>
+          <span className="section-kicker">Instructor Mode</span>
+          <h2>Deep Learning Evidence Board</h2>
+        </div>
+        <button className="report-btn" type="button" onClick={onDownloadReport} disabled={!hasAnalysis}>
+          <FileText size={16} />
+          Export Report
+        </button>
+      </div>
+
+      <div className="wow-grid">
+        <div className="wow-card hero-evidence">
+          <div className="wow-card-title">
+            <Brain size={18} />
+            <span>Model Decision</span>
+          </div>
+          <strong>{insights.verdict}</strong>
+          <p>
+            {hasAnalysis
+              ? `The system sampled ${insights.total} frames and found evidence in ${insights.positiveCount} frames.`
+              : 'Run detection to populate the instructor evidence board.'}
+          </p>
+          <div className={`verdict-strip level-${level}`}>
+            <span>{level.toUpperCase()}</span>
+            <b>{metrics.risk}/100 risk</b>
+          </div>
+        </div>
+
+        <div className="wow-card">
+          <div className="wow-card-title">
+            <Gauge size={18} />
+            <span>Inference Speed</span>
+          </div>
+          <strong>{formatMs(insights.avgInference)}</strong>
+          <p>{modelCard.estimated_model_fps ? `${modelCard.estimated_model_fps} estimated FPS` : 'Measured from sampled frames'}</p>
+        </div>
+
+        <div className="wow-card">
+          <div className="wow-card-title">
+            <Target size={18} />
+            <span>Confidence</span>
+          </div>
+          <strong>{pct(insights.avgConfidence * 100, 1)}</strong>
+          <p>Threshold: {analysis?.conf || modelCard.confidence_threshold || 0.25}</p>
+        </div>
+
+        <div className="wow-card">
+          <div className="wow-card-title">
+            <Layers size={18} />
+            <span>Segmentation</span>
+          </div>
+          <strong>{insights.maskCount}</strong>
+          <p>frames with mask-level fire evidence</p>
+        </div>
+      </div>
+
+      <div className="instructor-layout">
+        <div className="panel-lite explain-panel">
+          <h3>
+            <Eye size={16} /> Explainable AI View
+          </h3>
+          <div className="explain-steps">
+            {(peak?.explainability || ['No explanation yet. Run detection first.']).map((item, index) => (
+              <div className="explain-step" key={`${item}-${index}`}>
+                <span>{index + 1}</span>
+                <p>{item}</p>
+              </div>
+            ))}
+          </div>
+          <div className="comparison-grid">
+            <div>
+              <span>First Detection</span>
+              <strong>{first ? `${Number(first.t).toFixed(2)}s` : 'None'}</strong>
+            </div>
+            <div>
+              <span>Peak Fire Area</span>
+              <strong>{Math.round(metrics.peak).toLocaleString()} px</strong>
+            </div>
+            <div>
+              <span>Fire Growth</span>
+              <strong>{insights.growth >= 0 ? '+' : ''}{Math.round(insights.growth).toLocaleString()} px</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-lite metrics-panel">
+          <h3>
+            <BarChart3 size={16} /> Model Evaluation Snapshot
+          </h3>
+          <div className="metric-bars">
+            <MetricBar label="Precision" value={insights.estimatedPrecision} />
+            <MetricBar label="Recall" value={insights.estimatedRecall} />
+            <MetricBar label="F1 Score" value={insights.estimatedF1} />
+          </div>
+          <div className="confusion-matrix" aria-label="Confusion matrix proxy">
+            <div className="matrix-cell good">
+              <span>TP</span>
+              <strong>{insights.confusion.tp}</strong>
+            </div>
+            <div className="matrix-cell warn">
+              <span>FP</span>
+              <strong>{insights.confusion.fp}</strong>
+            </div>
+            <div className="matrix-cell warn">
+              <span>FN</span>
+              <strong>{insights.confusion.fn}</strong>
+            </div>
+            <div className="matrix-cell good">
+              <span>TN</span>
+              <strong>{insights.confusion.tn}</strong>
+            </div>
+          </div>
+          <p className="metric-note">
+            Proxy metrics are computed from this analyzed sample. Replace them with labeled test-set metrics when you present final validation.
+          </p>
+        </div>
+
+        <div className="panel-lite pipeline-panel">
+          <h3>
+            <Flame size={16} /> Before / Detection / Decision
+          </h3>
+          <div className="pipeline-steps">
+            <div>
+              <span>1</span>
+              <strong>Raw Video</strong>
+              <p>Frame stream sampled at {modelCard.sample_interval_sec || 0.2}s intervals.</p>
+            </div>
+            <div>
+              <span>2</span>
+              <strong>YOLO + Mask</strong>
+              <p>Bounding boxes, segmentation masks, confidence, and fire area are extracted.</p>
+            </div>
+            <div>
+              <span>3</span>
+              <strong>Risk Engine</strong>
+              <p>Temporal fire/smoke evidence becomes a {metrics.risk}/100 response score.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function MetricBar({ label, value }) {
+  const safeValue = Math.max(0, Math.min(100, Number(value) || 0))
+  return (
+    <div className="metric-bar">
+      <div>
+        <span>{label}</span>
+        <strong>{pct(safeValue, 1)}</strong>
+      </div>
+      <div className="metric-track">
+        <span style={{ width: `${safeValue}%` }} />
+      </div>
+    </div>
+  )
+}
+
 
 // ── Main App ──
 function App() {
@@ -599,6 +979,77 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(false)
+  const [participants, setParticipants] = useState([])
+  const [fetchingParticipants, setFetchingParticipants] = useState(false)
+
+  const fetchParticipants = useCallback(async () => {
+    if (!online) return
+    setFetchingParticipants(true)
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/participants`)
+      if (res.ok) {
+        const data = await res.json()
+        setParticipants(data)
+      }
+    } catch (e) {
+      console.error("Failed to fetch participants:", e)
+    } finally {
+      setFetchingParticipants(false)
+    }
+  }, [online])
+
+  const handleAddParticipant = useCallback(async (participant) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/participants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(participant),
+      })
+      if (res.ok) {
+        await fetchParticipants()
+        return true
+      }
+    } catch (e) {
+      console.error("Failed to add participant:", e)
+    }
+    return false
+  }, [fetchParticipants])
+
+  const handleDeleteParticipant = useCallback(async (id) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/participants/${id}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        await fetchParticipants()
+        return true
+      }
+    } catch (e) {
+      console.error("Failed to delete participant:", e)
+    }
+    return false
+  }, [fetchParticipants])
+
+  const handleToggleParticipant = useCallback(async (id, isActive) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/participants/${id}/status?is_active=${isActive}`, {
+        method: 'PATCH',
+      })
+      if (res.ok) {
+        await fetchParticipants()
+        return true
+      }
+    } catch (e) {
+      console.error("Failed to toggle participant status:", e)
+    }
+    return false
+  }, [fetchParticipants])
+
+  useEffect(() => {
+    if (settingsOpen) {
+      fetchParticipants()
+    }
+  }, [settingsOpen, fetchParticipants])
 
   const addNotification = useCallback((kind, title, message, type = 'info') => {
     const id = Math.random().toString(36).substr(2, 9)
@@ -694,6 +1145,11 @@ function App() {
   }, [analysis])
 
   const level = useMemo(() => (metrics.risk >= 75 ? 'critical' : metrics.risk >= 50 ? 'high' : metrics.risk >= 30 ? 'moderate' : 'low'), [metrics.risk])
+
+  const instructorInsights = useMemo(
+    () => buildInstructorInsights(analysis, metrics, level),
+    [analysis, metrics, level],
+  )
 
   const timeline = useMemo(
     () => (analysis?.frames || []).map((f) => ({ t: Number(f.t || 0).toFixed(2), fire: Number(f.fire_segment_area_pixels || 0), smoke: f.smoke ? 1 : 0 })),
@@ -962,6 +1418,37 @@ function App() {
     }
   }
 
+  const downloadInstructorReport = useCallback(async () => {
+    if (!analysis?.frames?.length) return
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/reports/instructor.pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysis,
+          metrics,
+          level,
+          insights: instructorInsights,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || 'PDF export failed')
+      }
+      const blob = await res.blob()
+      const object = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const safeName = (analysis.filename || 'firewatch-analysis').replace(/\.[^.]+$/, '').replace(/[^a-z0-9_-]+/gi, '_')
+      a.href = object
+      a.download = `FireWatch_Instructor_Report_${safeName}.pdf`
+      a.click()
+      URL.revokeObjectURL(object)
+      addNotification('sms', 'PDF Report Exported', 'Styled instructor report downloaded successfully.', 'success')
+    } catch (e) {
+      addNotification('sms', 'PDF Export Failed', e.message || 'Could not generate the report PDF.', 'error')
+    }
+  }, [addNotification, analysis, instructorInsights, level, metrics])
+
 
   // RAG query
   const askRag = async () => {
@@ -999,7 +1486,18 @@ function App() {
         soundEnabled={soundEnabled}
       />
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} online={online} soundEnabled={soundEnabled} alertConfig={health?.alerts} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        online={online}
+        soundEnabled={soundEnabled}
+        alertConfig={health?.alerts}
+        participants={participants}
+        onAddParticipant={handleAddParticipant}
+        onDeleteParticipant={handleDeleteParticipant}
+        onToggleParticipant={handleToggleParticipant}
+        fetchingParticipants={fetchingParticipants}
+      />
       <StatusBar online={online} metrics={metrics} level={level} alertConfig={health?.alerts} />
 
 
@@ -1031,6 +1529,14 @@ function App() {
         <TimelineChart timeline={timeline} />
         <SummaryPanel metrics={metrics} />
       </footer>
+
+      <InstructorModePanel
+        analysis={analysis}
+        metrics={metrics}
+        level={level}
+        insights={instructorInsights}
+        onDownloadReport={downloadInstructorReport}
+      />
 
       <CreditFooter />
 

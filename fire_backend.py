@@ -9,7 +9,7 @@ SQLite + FastAPI
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, selectinload
@@ -240,7 +240,39 @@ class SafetyProcedure(Base):
         }
 
 
+class Participant(Base):
+    __tablename__ = "participants"
+    
+    participant_id = Column(Integer, primary_key=True)
+    name = Column(String)
+    email = Column(String, unique=True)
+    role = Column(String, default="Stakeholder")
+    is_active = Column(Integer, default=1)  # 1 for active, 0 for inactive
+    
+    def to_dict(self):
+        return {
+            "participant_id": self.participant_id,
+            "name": self.name,
+            "email": self.email,
+            "role": self.role,
+            "is_active": bool(self.is_active)
+        }
+
+
 # ============= PYDANTIC SCHEMAS =============
+class ParticipantCreate(BaseModel):
+    name: str
+    email: str
+    role: str = "Stakeholder"
+
+
+class ParticipantUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class DetectionCreate(BaseModel):
     zone_id: int
     coordinates_x: float
@@ -269,6 +301,13 @@ class RAGQueryRequest(BaseModel):
     top_k: int = 3
 
 
+class InstructorReportRequest(BaseModel):
+    analysis: dict[str, Any]
+    metrics: dict[str, Any]
+    level: str
+    insights: dict[str, Any]
+
+
 # ============= FASTAPI APP =============
 app = FastAPI(title="Fire Management System", version="1.0")
 
@@ -290,6 +329,22 @@ async def startup():
     # 1. Create DB Tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # 1.5. Seed Participants from Environment variable if table empty
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(Participant))
+            existing = result.scalars().first()
+            if not existing:
+                env_receivers = os.getenv("REMINDER_EMAIL_RECEIVERS", "")
+                default_emails = [email.strip() for email in env_receivers.split(",") if email.strip()]
+                for email in default_emails:
+                    name = email.split("@")[0].replace(".", " ").title()
+                    db.add(Participant(name=name, email=email, role="Stakeholder", is_active=1))
+                await db.commit()
+                print(f"✅ Pre-seeded {len(default_emails)} alert participants from env config.")
+        except Exception as e:
+            print(f"⚠️  Error pre-seeding participants: {e}")
     
     # 2. Check Gmail API (Alerts)
     if not os.path.exists(GOOGLE_TOKEN_FILE):
@@ -786,6 +841,348 @@ def annotate_frame_bgr(frame_bgr: np.ndarray, y: dict, conf: float) -> np.ndarra
     return out
 
 
+def _report_pct(value: Any, digits: int = 1) -> str:
+    try:
+        return f"{float(value):.{digits}f}%"
+    except (TypeError, ValueError):
+        return "0.0%"
+
+
+def _report_num(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _report_text(value: Any, fallback: str = "N/A") -> str:
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def build_instructor_pdf(payload: InstructorReportRequest) -> bytes:
+    """Create a polished PDF report for the Instructor Mode evidence board."""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"PDF generation dependency missing: {exc}") from exc
+
+    analysis = payload.analysis or {}
+    metrics = payload.metrics or {}
+    insights = payload.insights or {}
+    model_card = analysis.get("model_card") or {}
+    confusion = insights.get("confusion") or {}
+    peak_frame = insights.get("peakFrame") or insights.get("peak_frame") or {}
+    explanations = peak_frame.get("explainability") or ["No frame-level explanation was available."]
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=15 * mm,
+        bottomMargin=14 * mm,
+        title="FireWatch AI Instructor Report",
+    )
+
+    styles = getSampleStyleSheet()
+    cyan = colors.HexColor("#1fbfd0")
+    cyan_light = colors.HexColor("#d9fbff")
+    dark = colors.HexColor("#0c111b")
+    panel = colors.HexColor("#121923")
+    panel_alt = colors.HexColor("#17202b")
+    muted = colors.HexColor("#70808c")
+    line = colors.HexColor("#234653")
+    danger = colors.HexColor("#d85858")
+    green = colors.HexColor("#27c486")
+
+    title = ParagraphStyle(
+        "FireTitle",
+        parent=styles["Title"],
+        textColor=cyan_light,
+        fontName="Helvetica-Bold",
+        fontSize=23,
+        leading=28,
+        spaceAfter=4,
+    )
+    subtitle = ParagraphStyle(
+        "FireSubtitle",
+        parent=styles["Normal"],
+        textColor=colors.HexColor("#aebcc7"),
+        fontName="Helvetica",
+        fontSize=8,
+        leading=11,
+        spaceAfter=8,
+    )
+    section = ParagraphStyle(
+        "FireSection",
+        parent=styles["Heading2"],
+        textColor=cyan,
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+        spaceBefore=8,
+        spaceAfter=6,
+    )
+    body = ParagraphStyle(
+        "FireBody",
+        parent=styles["BodyText"],
+        textColor=colors.HexColor("#dbe6ec"),
+        fontName="Helvetica",
+        fontSize=8.7,
+        leading=12,
+    )
+    body_muted = ParagraphStyle(
+        "FireMuted",
+        parent=body,
+        textColor=colors.HexColor("#96a6b2"),
+        fontSize=8,
+    )
+    right = ParagraphStyle("Right", parent=body, alignment=TA_RIGHT)
+    center = ParagraphStyle("Center", parent=body, alignment=TA_CENTER)
+
+    def p(text: Any, style=body) -> Paragraph:
+        safe = _report_text(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Paragraph(safe, style)
+
+    def small_card(label: str, value: str, detail: str = "") -> list:
+        return [
+            p(label.upper(), ParagraphStyle(f"{label}Label", parent=body_muted, textColor=cyan, fontName="Helvetica-Bold", fontSize=7, leading=9)),
+            p(value, ParagraphStyle(f"{label}Value", parent=body, textColor=colors.white, fontName="Helvetica-Bold", fontSize=14, leading=18)),
+            p(detail, body_muted),
+        ]
+
+    generated = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    filename = _report_text(analysis.get("filename"), "Uploaded video")
+    risk = int(_report_num(metrics.get("risk")))
+    level = _report_text(payload.level, "low").upper()
+    verdict = _report_text(insights.get("verdict"), "Continue monitoring")
+    avg_conf = _report_num(insights.get("avgConfidence")) * 100
+    avg_infer = _report_num(insights.get("avgInference"))
+    fps_est = _report_text(model_card.get("estimated_model_fps"), "N/A")
+    peak_area = _report_num(metrics.get("peak"))
+
+    story = []
+    header_data = [
+        [
+            [p("FIREWATCH AI", ParagraphStyle("Brand", parent=body, textColor=cyan, fontName="Helvetica-Bold", fontSize=8, leading=10)),
+             Paragraph("Instructor Evidence Report", title),
+             p(f"Generated: {generated}", subtitle)],
+            [p("RISK LEVEL", ParagraphStyle("RiskLabel", parent=body_muted, alignment=TA_RIGHT, textColor=cyan, fontName="Helvetica-Bold", fontSize=7)),
+             Paragraph(level, ParagraphStyle("RiskValue", parent=right, textColor=danger if level == "CRITICAL" else cyan_light, fontName="Helvetica-Bold", fontSize=18, leading=22)),
+             p(f"{risk}/100 risk score", right)],
+        ]
+    ]
+    header = Table(header_data, colWidths=[120 * mm, 45 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), dark),
+        ("BOX", (0, 0), (-1, -1), 0.75, line),
+        ("INNERPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.extend([header, Spacer(1, 7)])
+
+    cards = Table(
+        [[
+            small_card("Model Decision", verdict, f"{insights.get('positiveCount', 0)} / {insights.get('total', 0)} sampled frames flagged"),
+            small_card("Inference Speed", f"{avg_infer:.0f} ms", f"{fps_est} estimated FPS"),
+            small_card("Confidence", _report_pct(avg_conf), f"Threshold: {analysis.get('conf', model_card.get('confidence_threshold', 0.25))}"),
+            small_card("Segmentation", str(insights.get("maskCount", 0)), "mask-positive frames"),
+        ]],
+        colWidths=[58 * mm, 35 * mm, 35 * mm, 37 * mm],
+    )
+    cards.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), panel),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.45, colors.HexColor("#1f3440")),
+        ("INNERPADDING", (0, 0), (-1, -1), 7),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.extend([cards, Spacer(1, 7)])
+
+    story.append(Paragraph("Decision Summary", section))
+    summary = Table(
+        [
+            [p("Video", body_muted), p(filename), p("Resolution", body_muted), p(f"{analysis.get('video_width', 0)} x {analysis.get('video_height', 0)}")],
+            [p("Duration", body_muted), p(f"{analysis.get('duration_sec', 0)} sec"), p("Samples", body_muted), p(str(analysis.get("samples", 0)))],
+            [p("First Detection", body_muted), p(f"{_report_num((insights.get('firstDetection') or {}).get('t')):.2f}s"), p("Peak Fire Area", body_muted), p(f"{peak_area:,.0f} px")],
+        ],
+        colWidths=[30 * mm, 52 * mm, 30 * mm, 53 * mm],
+    )
+    summary.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), panel),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#1d313b")),
+        ("INNERPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([summary, Spacer(1, 4)])
+
+    story.append(Paragraph("Deep Learning Evidence", section))
+    evidence = Table(
+        [
+            [p("Architecture", body_muted), p(_report_text(model_card.get("architecture"), "YOLO detector + YOLO segmentation"))],
+            [p("Detector Loaded", body_muted), p("Yes" if model_card.get("detector_loaded") else "Optional detector unavailable")],
+            [p("Segmentation Loaded", body_muted), p("Yes" if model_card.get("segmentation_loaded", True) else "No")],
+            [p("Mean Fire Area", body_muted), p(f"{_report_num((analysis.get('explainability_summary') or {}).get('mean_fire_area_pixels')):,.1f} px")],
+        ],
+        colWidths=[42 * mm, 123 * mm],
+    )
+    evidence.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), panel_alt),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#1d313b")),
+        ("INNERPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([evidence, Spacer(1, 4)])
+
+    story.append(Paragraph("Evaluation Snapshot", section))
+    eval_table = Table(
+        [
+            [p("Precision", center), p("Recall", center), p("F1 Score", center), p("TP", center), p("FP", center), p("FN", center), p("TN", center)],
+            [
+                p(_report_pct(insights.get("estimatedPrecision")), center),
+                p(_report_pct(insights.get("estimatedRecall")), center),
+                p(_report_pct(insights.get("estimatedF1")), center),
+                p(str(confusion.get("tp", 0)), center),
+                p(str(confusion.get("fp", 0)), center),
+                p(str(confusion.get("fn", 0)), center),
+                p(str(confusion.get("tn", 0)), center),
+            ],
+        ],
+        colWidths=[25 * mm, 25 * mm, 25 * mm, 22.5 * mm, 22.5 * mm, 22.5 * mm, 22.5 * mm],
+    )
+    eval_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#10252d")),
+        ("BACKGROUND", (0, 1), (-1, 1), panel),
+        ("TEXTCOLOR", (0, 0), (-1, 0), cyan),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#1d313b")),
+        ("INNERPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([eval_table, p("These values summarize the analyzed sample. Use a labeled validation set for final academic precision, recall, F1, and confusion-matrix claims.", body_muted), Spacer(1, 4)])
+
+    story.append(Paragraph("Explainable AI Trace", section))
+    trace_rows = [[p(str(i + 1), center), p(item)] for i, item in enumerate(explanations)]
+    trace = Table(trace_rows, colWidths=[12 * mm, 153 * mm])
+    trace.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), panel),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#1d313b")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#10252d")),
+        ("TEXTCOLOR", (0, 0), (0, -1), cyan),
+        ("INNERPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([trace, Spacer(1, 4)])
+
+    story.append(Paragraph("Response Pipeline", section))
+    pipeline = Table(
+        [
+            [p("1", center), p("Raw Video"), p(f"Frame stream sampled at {model_card.get('sample_interval_sec', 0.2)}s intervals.")],
+            [p("2", center), p("YOLO + Mask"), p("Bounding boxes, segmentation masks, confidence, and fire area are extracted.")],
+            [p("3", center), p("Risk Engine"), p(f"Temporal fire/smoke evidence becomes a {risk}/100 response score.")],
+        ],
+        colWidths=[12 * mm, 34 * mm, 119 * mm],
+    )
+    pipeline.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), panel_alt),
+        ("BOX", (0, 0), (-1, -1), 0.65, line),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#1d313b")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#10252d")),
+        ("TEXTCOLOR", (0, 0), (0, -1), cyan),
+        ("INNERPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([pipeline, Spacer(1, 6)])
+
+    footer = Table([[p("FireWatch AI combines YOLO object detection, segmentation masks, temporal risk scoring, RAG-assisted guidance, and demo-safe response workflows.", body_muted)]], colWidths=[165 * mm])
+    footer.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#071018")),
+        ("BOX", (0, 0), (-1, -1), 0.65, colors.HexColor("#173540")),
+        ("INNERPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.append(footer)
+
+    def page_canvas(canvas, pdf_doc):
+        canvas.saveState()
+        canvas.setFillColor(dark)
+        canvas.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
+        canvas.setStrokeColor(colors.HexColor("#102a33"))
+        canvas.setLineWidth(0.7)
+        canvas.line(16 * mm, 12 * mm, A4[0] - 16 * mm, 12 * mm)
+        canvas.setFillColor(muted)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(16 * mm, 8 * mm, "FireWatch AI - Deep Learning Evidence Report")
+        canvas.drawRightString(A4[0] - 16 * mm, 8 * mm, f"Page {pdf_doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=page_canvas, onLaterPages=page_canvas)
+    buffer.seek(0)
+    return buffer.read()
+
+
+# ============= PARTICIPANTS ENDPOINTS =============
+@app.get("/api/participants")
+async def get_participants(db: AsyncSession = Depends(get_db)):
+    """Retrieve all email alert participants"""
+    result = await db.execute(select(Participant).order_by(Participant.participant_id.asc()))
+    participants = result.scalars().all()
+    return [p.to_dict() for p in participants]
+
+
+@app.post("/api/participants")
+async def add_participant(participant: ParticipantCreate, db: AsyncSession = Depends(get_db)):
+    """Add a new alert participant"""
+    # Check if email already exists
+    result = await db.execute(select(Participant).filter(Participant.email == participant.email))
+    existing = result.scalars().first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Participant with this email already exists.")
+        
+    db_participant = Participant(
+        name=participant.name,
+        email=participant.email,
+        role=participant.role,
+        is_active=1
+    )
+    db.add(db_participant)
+    await db.commit()
+    await db.refresh(db_participant)
+    return db_participant.to_dict()
+
+
+@app.patch("/api/participants/{participant_id}/status")
+async def toggle_participant_status(participant_id: int, is_active: bool, db: AsyncSession = Depends(get_db)):
+    """Toggle participant is_active status"""
+    result = await db.execute(select(Participant).filter(Participant.participant_id == participant_id))
+    participant = result.scalars().first()
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+        
+    participant.is_active = 1 if is_active else 0
+    await db.commit()
+    return {"status": "Participant status updated", "participant_id": participant_id, "is_active": is_active}
+
+
+@app.delete("/api/participants/{participant_id}")
+async def delete_participant(participant_id: int, db: AsyncSession = Depends(get_db)):
+    """Remove a participant from alerts"""
+    result = await db.execute(select(Participant).filter(Participant.participant_id == participant_id))
+    participant = result.scalars().first()
+    if not participant:
+        raise HTTPException(status_code=404, detail="Participant not found")
+        
+    await db.delete(participant)
+    await db.commit()
+    return {"status": "Participant deleted", "participant_id": participant_id}
+
+
 # ============= INITIALIZATION ENDPOINTS =============
 @app.post("/api/init/zones")
 async def initialize_zones(db: AsyncSession = Depends(get_db)):
@@ -1156,6 +1553,7 @@ async def analyze_uploaded_video(
         frames_out = []
         idx = 0
         positive_frames = 0
+        inference_times_ms = []
 
         while idx < frame_count and len(frames_out) < max_samples:
             if duration_sec > 0 and (idx / fps) > max_analyze_sec:
@@ -1168,10 +1566,33 @@ async def analyze_uploaded_video(
 
             t = idx / fps if fps > 0 else 0.0
             try:
+                infer_start = time.perf_counter()
                 y = infer_frame_yolo(frame, conf=conf)
+                inference_ms = (time.perf_counter() - infer_start) * 1000
+                inference_times_ms.append(inference_ms)
             except Exception as e:
                 cap.release()
                 raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
+
+            detection_confidences = [
+                float(d.get("confidence", 0.0))
+                for d in (
+                    (y.get("fire_boxes") or [])
+                    + (y.get("smoke_boxes") or [])
+                    + (y.get("raw_segmentation_detections") or [])
+                )
+                if d.get("confidence") is not None
+            ]
+            max_confidence = max(detection_confidences) if detection_confidences else 0.0
+            explainability = []
+            if y["fire"]:
+                explainability.append("Segmentation mask or fire-class detection activated")
+            if y.get("smoke"):
+                explainability.append("Smoke-class detector found a candidate region")
+            if y.get("fire_segment_area_pixels", 0.0) > 0:
+                explainability.append("Fire area estimated from mask pixels")
+            if not explainability:
+                explainability.append("No fire/smoke evidence crossed the confidence threshold")
 
             if y["fire"] or y.get("smoke"):
                 positive_frames += 1
@@ -1229,6 +1650,10 @@ async def analyze_uploaded_video(
                     "fire_segment_area_pixels": y.get("fire_segment_area_pixels", 0.0),
                     "smoke_boxes": y.get("smoke_boxes") or [],
                     "fire_boxes": y.get("fire_boxes") or [],
+                    "confidence": round(max_confidence, 4),
+                    "inference_ms": round(inference_ms, 2),
+                    "segmentation_instances": len(y.get("fire_masks") or []),
+                    "explainability": explainability,
                 }
                 frames_out.append(frame_payload)
             else:
@@ -1242,6 +1667,10 @@ async def analyze_uploaded_video(
                         "fire_segment_area_pixels": 0.0,
                         "smoke_boxes": y.get("smoke_boxes") or [],
                         "fire_boxes": y.get("fire_boxes") or [],
+                        "confidence": round(max_confidence, 4),
+                        "inference_ms": round(inference_ms, 2),
+                        "segmentation_instances": 0,
+                        "explainability": explainability,
                     }
                 )
 
@@ -1257,6 +1686,13 @@ async def analyze_uploaded_video(
 
         det_path_str = os.environ.get("FIRE_DETECT_MODEL") or str(DEFAULT_DETECT_PT)
         det_loaded = get_yolo_det() is not None
+        avg_inference_ms = sum(inference_times_ms) / len(inference_times_ms) if inference_times_ms else 0.0
+        analyzed_fps = 1000 / avg_inference_ms if avg_inference_ms > 0 else 0.0
+        fire_areas = [float(f.get("fire_segment_area_pixels", 0.0)) for f in frames_out]
+        peak_area = max(fire_areas) if fire_areas else 0.0
+        mean_area = sum(fire_areas) / len(fire_areas) if fire_areas else 0.0
+        confidence_values = [float(f.get("confidence", 0.0)) for f in frames_out if f.get("confidence", 0.0) > 0]
+        mean_confidence = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
         note_parts = [
             "YOLO segmentation from fire_seg_final_results.zip (extracted to models/fire_seg/weights/best.pt).",
         ]
@@ -1277,6 +1713,22 @@ async def analyze_uploaded_video(
             "positive_frames": positive_frames,
             "fire_frames": positive_frames,
             "conf": conf,
+            "model_card": {
+                "architecture": "YOLO detector + YOLO segmentation",
+                "detector_loaded": det_loaded,
+                "segmentation_loaded": True,
+                "confidence_threshold": conf,
+                "sample_interval_sec": sample_interval_sec,
+                "avg_inference_ms": round(avg_inference_ms, 2),
+                "estimated_model_fps": round(analyzed_fps, 2),
+                "mean_detection_confidence": round(mean_confidence, 4),
+            },
+            "explainability_summary": {
+                "peak_fire_area_pixels": round(peak_area, 1),
+                "mean_fire_area_pixels": round(mean_area, 1),
+                "mask_positive_frames": sum(1 for f in frames_out if f.get("segmentation_instances", 0) > 0),
+                "confidence_positive_frames": len(confidence_values),
+            },
             "note": " ".join(note_parts),
             "frames": frames_out,
         }
@@ -1459,6 +1911,23 @@ async def export_annotated_video(
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+@app.post("/api/reports/instructor.pdf")
+async def export_instructor_report_pdf(payload: InstructorReportRequest):
+    """Generate a styled PDF report from the frontend Instructor Mode analysis state."""
+    pdf_bytes = build_instructor_pdf(payload)
+    filename = "FireWatch_Instructor_Report.pdf"
+    raw_name = payload.analysis.get("filename") if isinstance(payload.analysis, dict) else None
+    if raw_name:
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(str(raw_name)).stem)[:80]
+        filename = f"FireWatch_Instructor_Report_{safe}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/rag/query")
