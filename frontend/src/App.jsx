@@ -510,6 +510,7 @@ function VideoDisplay({ url, videoRef, canvasRef, stageRef, analysis, online, bu
               <Upload size={12} /> Change Video
             </button>
           </div>
+          {error && <div className="inline-error video-error">{error}</div>}
         </>
       ) : (
         <div className="placeholder unified-upload">
@@ -1361,8 +1362,14 @@ function App() {
   // Detection
   const detect = async () => {
     console.log('[Detect] Starting detection...')
-    if (!online || !file) {
-      console.warn('[Detect] Cannot detect - online:', online, 'file:', !!file)
+    if (!file) {
+      setErr('Select a video before starting detection.')
+      console.warn('[Detect] Cannot detect - missing file')
+      return
+    }
+    if (!online) {
+      setErr('Backend is offline. Check the deployment URL, then try again.')
+      console.warn('[Detect] Cannot detect - backend offline')
       return
     }
     setBusy(true)
@@ -1393,7 +1400,14 @@ function App() {
 
   // Export
   const download = async () => {
-    if (!online || !file) return
+    if (!file) {
+      setErr('Select a video before exporting.')
+      return
+    }
+    if (!online) {
+      setErr('Backend is offline. Check the deployment URL, then try again.')
+      return
+    }
     setExporting(true)
     setErr(null)
     try {

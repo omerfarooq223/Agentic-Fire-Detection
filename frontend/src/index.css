@@ -653,6 +653,13 @@ body {
   letter-spacing: 0.02em;
 }
 
+.video-error {
+  margin: 0.75rem 1rem 1rem;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* ── Compact Controls ── */
 .compact-controls {
   display: grid;
@@ -3982,4 +3989,3 @@ body::before {
   cursor: pointer;
   transition: all 0.2s;
 }
-

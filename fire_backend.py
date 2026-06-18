@@ -708,6 +708,7 @@ async def forward_upload_to_remote(
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    print(f"↗️  Forwarding {file.filename or 'upload'} to remote inference: {remote_url}", flush=True)
     try:
         response = requests.post(
             remote_url,
@@ -732,6 +733,7 @@ async def forward_upload_to_remote(
             detail=f"Remote inference service unavailable: {exc}",
         ) from exc
 
+    print(f"↙️  Remote inference response {response.status_code} from {endpoint}", flush=True)
     if response.status_code >= 400:
         detail = response.text
         try:
