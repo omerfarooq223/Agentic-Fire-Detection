@@ -65,18 +65,24 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "") # Requires Gmail App Password
 ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
 GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "token.json")
 
-def get_shared_rag() -> RealRAGSystem:
-    """Load the vector RAG system only when the agent actually needs it."""
+def get_shared_rag(instance: Optional[RealRAGSystem] = None) -> RealRAGSystem:
+    """Return (or set) the shared RAG singleton.
+    
+    If *instance* is provided it becomes the shared singleton, avoiding a
+    second load of the embedding model.
+    """
     global _shared_rag
+    if instance is not None:
+        _shared_rag = instance
     if _shared_rag is None:
         _shared_rag = RealRAGSystem()
     return _shared_rag
 
 class FireManagementAgent:
-    def __init__(self, groq_api_key: str = None):
+    def __init__(self, groq_api_key: str = None, rag_system: Optional[RealRAGSystem] = None):
         # Use provided key, fall back to .env value
         self.groq_key = groq_api_key or GROQ_API_KEY
-        self.rag = get_shared_rag()
+        self.rag = get_shared_rag(rag_system)
         self.incident_log = []
         
         # Define tools the agent can use

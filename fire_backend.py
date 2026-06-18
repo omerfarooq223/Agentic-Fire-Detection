@@ -43,6 +43,9 @@ ALERT_MODE = os.getenv("ALERT_MODE", "demo").strip().lower()
 AUTO_ALERTS_ENABLED = os.getenv("AUTO_ALERTS_ENABLED", "false").strip().lower() == "true"
 ALERT_CONFIRMATION_FRAMES = max(1, int(os.getenv("ALERT_CONFIRMATION_FRAMES", "3")))
 ALERT_COOLDOWN_SECONDS = max(0, int(os.getenv("ALERT_COOLDOWN_SECONDS", "300")))
+INFERENCE_MODE = os.getenv("INFERENCE_MODE", "local").strip().lower()
+INFERENCE_SERVICE_URL = os.getenv("INFERENCE_SERVICE_URL", "").strip().rstrip("/")
+REMOTE_INFERENCE_TIMEOUT_SECONDS = max(30, int(os.getenv("REMOTE_INFERENCE_TIMEOUT_SECONDS", "300")))
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -579,7 +582,7 @@ def get_rag_system() -> Any:
 def get_fire_agent() -> FireManagementAgent:
     global _fire_agent
     if _fire_agent is None:
-        _fire_agent = FireManagementAgent()
+        _fire_agent = FireManagementAgent(rag_system=get_rag_system())
     return _fire_agent
 
 
@@ -669,6 +672,69 @@ def dispatch_confirmed_alert(
             lat=lat,
             lon=lon,
         )
+
+
+def remote_inference_enabled() -> bool:
+    return INFERENCE_MODE == "remote"
+
+
+def require_remote_inference_url() -> str:
+    if not INFERENCE_SERVICE_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Remote inference is enabled but INFERENCE_SERVICE_URL is not configured.",
+        )
+    return INFERENCE_SERVICE_URL
+
+
+async def forward_upload_to_remote(
+    endpoint: str,
+    file: UploadFile,
+    params: dict[str, Any],
+) -> requests.Response:
+    base_url = require_remote_inference_url()
+    remote_url = f"{base_url}/{endpoint.lstrip('/')}"
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        response = requests.post(
+            remote_url,
+            params=params,
+            files={
+                "file": (
+                    file.filename or "upload",
+                    raw,
+                    file.content_type or "application/octet-stream",
+                )
+            },
+            timeout=REMOTE_INFERENCE_TIMEOUT_SECONDS,
+        )
+    except requests.Timeout as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Remote inference timed out. The Hugging Face Space may be waking up or the video is too long.",
+        ) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Remote inference service unavailable: {exc}",
+        ) from exc
+
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail = response.json().get("detail", detail)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Remote inference failed: {detail}",
+        )
+
+    return response
+
 
 def _boxes_from_result(result, im_w: int, im_h: int) -> list:
     out = []
@@ -1552,6 +1618,14 @@ async def analyze_uploaded_video(
     sample_interval_sec = max(0.15, min(float(sample_interval_sec), 2.0))
     conf = max(0.05, min(float(conf), 0.95))
 
+    if remote_inference_enabled():
+        response = await forward_upload_to_remote(
+            endpoint="/analyze/video",
+            file=file,
+            params={"sample_interval_sec": sample_interval_sec, "conf": conf},
+        )
+        return response.json()
+
     try:
         ensure_segmentation_weights()
     except FileNotFoundError as e:
@@ -1786,6 +1860,14 @@ async def analyze_uploaded_image(
 
     conf = max(0.05, min(float(conf), 0.95))
 
+    if remote_inference_enabled():
+        response = await forward_upload_to_remote(
+            endpoint="/analyze/image",
+            file=file,
+            params={"conf": conf},
+        )
+        return response.json()
+
     try:
         ensure_segmentation_weights()
     except FileNotFoundError as e:
@@ -1856,6 +1938,19 @@ async def export_annotated_video(
 
     conf = max(0.05, min(float(conf), 0.95))
     infer_stride = max(1, min(int(infer_stride), 30))
+
+    if remote_inference_enabled():
+        response = await forward_upload_to_remote(
+            endpoint="/analyze/video/export",
+            file=file,
+            params={"conf": conf, "infer_stride": infer_stride},
+        )
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(file.filename).stem)[:80]
+        return StreamingResponse(
+            io.BytesIO(response.content),
+            media_type=response.headers.get("content-type", "video/mp4"),
+            headers={"Content-Disposition": f'attachment; filename="FireWatch_annotated_{safe}.mp4"'},
+        )
 
     try:
         ensure_segmentation_weights()
