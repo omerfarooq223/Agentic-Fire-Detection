@@ -426,7 +426,24 @@ function StatusBar({ online, metrics, level, alertConfig }) {
   )
 }
 
-function VideoDisplay({ url, videoRef, canvasRef, stageRef, analysis, online, busy, exporting, onPick, onDetect, onDownload, onTime, onReset, error }) {
+function VideoDisplay({
+  url,
+  videoRef,
+  canvasRef,
+  stageRef,
+  analysis,
+  online,
+  busy,
+  exporting,
+  modelMode,
+  onModelModeChange,
+  onPick,
+  onDetect,
+  onDownload,
+  onTime,
+  onReset,
+  error,
+}) {
   const containerRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
@@ -500,6 +517,28 @@ function VideoDisplay({ url, videoRef, canvasRef, stageRef, analysis, online, bu
           </div>
 
           <div className="compact-controls">
+            <div className="model-mode-control" aria-label="Model mode">
+              <button
+                type="button"
+                className={modelMode === 'detection' ? 'active' : ''}
+                onClick={() => onModelModeChange('detection')}
+                disabled={busy || exporting}
+                title="Use bounding boxes only for fire and smoke"
+              >
+                <Target size={12} />
+                Detection
+              </button>
+              <button
+                type="button"
+                className={modelMode === 'hybrid' ? 'active' : ''}
+                onClick={() => onModelModeChange('hybrid')}
+                disabled={busy || exporting}
+                title="Use detector boxes plus fire segmentation masks"
+              >
+                <Layers size={12} />
+                Both
+              </button>
+            </div>
             <div className="button-stack">
               <button className="btn btn-sm red" onClick={onDetect} disabled={!online || busy}>
                 {busy ? <Loader2 size={12} className="spin" /> : <Activity size={12} />}
@@ -844,8 +883,8 @@ function InstructorModePanel({ analysis, metrics, level, insights, onDownloadRep
             <Layers size={18} />
             <span>Segmentation</span>
           </div>
-          <strong>{insights.maskCount}</strong>
-          <p>frames with mask-level fire evidence</p>
+          <strong>{modelCard.segmentation_loaded ? insights.maskCount : 'Off'}</strong>
+          <p>{modelCard.segmentation_loaded ? 'frames with mask-level fire evidence' : 'detection-only mode uses boxes'}</p>
         </div>
       </div>
 
@@ -983,6 +1022,7 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(false)
+  const [modelMode, setModelMode] = useState('hybrid')
   const [participants, setParticipants] = useState([])
   const [fetchingParticipants, setFetchingParticipants] = useState(false)
 
@@ -1096,6 +1136,12 @@ function App() {
       addNotification('sms', 'Alert Tone Muted', 'Header alert tone has been disabled.', 'info')
     }
   }, [addNotification, playAlertTone, soundEnabled])
+
+  const changeModelMode = useCallback((mode) => {
+    setModelMode(mode)
+    setAnalysis(null)
+    latestFrameRef.current = null
+  }, [])
 
 
   // Initialize DetectionOverlay when canvas becomes available (after video upload)
@@ -1382,7 +1428,7 @@ function App() {
       body.append('file', file)
       // Pass the laptop's GPS coordinates to the backend
       const geoParams = coords.lat ? `&lat=${coords.lat}&lon=${coords.lon}` : ''
-      const res = await fetch(`${BACKEND_URL}/api/analyze/video?conf=0.25&sample_interval_sec=0.2${geoParams}`, {
+      const res = await fetch(`${BACKEND_URL}/api/analyze/video?conf=0.25&sample_interval_sec=0.2&model_mode=${modelMode}${geoParams}`, {
         method: 'POST',
         body,
       })
@@ -1416,7 +1462,7 @@ function App() {
     try {
       const body = new FormData()
       body.append('file', file)
-      const res = await fetch(`${BACKEND_URL}/api/analyze/video/export?conf=0.25&infer_stride=1`, { method: 'POST', body })
+      const res = await fetch(`${BACKEND_URL}/api/analyze/video/export?conf=0.25&infer_stride=1&model_mode=${modelMode}`, { method: 'POST', body })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.detail || 'Export failed')
@@ -1527,6 +1573,8 @@ function App() {
           online={online}
           busy={busy}
           exporting={exporting}
+          modelMode={modelMode}
+          onModelModeChange={changeModelMode}
           onPick={pick}
           onDetect={detect}
           onDownload={download}

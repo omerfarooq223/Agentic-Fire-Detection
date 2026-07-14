@@ -806,7 +806,16 @@ def _bbox_from_polygon(poly: list) -> dict:
     return {"x": cx, "y": cy, "w": w, "h": h}
 
 
-def infer_frame_yolo(frame_bgr: np.ndarray, conf: float = 0.25) -> dict:
+def normalize_model_mode(model_mode: str = "hybrid") -> str:
+    mode = (model_mode or "hybrid").strip().lower()
+    if mode in {"both", "hybrid", "detection_segmentation", "detection+segmentation"}:
+        return "hybrid"
+    if mode in {"detection", "det", "boxes"}:
+        return "detection"
+    raise HTTPException(status_code=400, detail="model_mode must be 'detection' or 'hybrid'.")
+
+
+def infer_frame_yolo(frame_bgr: np.ndarray, conf: float = 0.25, model_mode: str = "hybrid") -> dict:
     """
     Run optional best.pt detector + segmentation model from zip.
     Returns normalized bbox (center), mask polygons, pixel area, fire flag.
@@ -824,18 +833,26 @@ def infer_frame_yolo(frame_bgr: np.ndarray, conf: float = 0.25) -> dict:
             "raw_segmentation_detections": [],
         }
 
+    model_mode = normalize_model_mode(model_mode)
+    use_segmentation = model_mode == "hybrid"
     im_h, im_w = frame_bgr.shape[:2]
     det_model = get_yolo_det()
-    seg_model = get_yolo_seg()
 
     det_entries: list = []
     if det_model is not None:
         dr = det_model(frame_bgr, conf=conf, verbose=False)[0]
         det_entries = _boxes_from_result(dr, im_w, im_h)
+    elif model_mode == "detection":
+        raise RuntimeError("Detection-only mode requires FIRE_DETECT_MODEL or best.pt.")
 
-    sr = seg_model(frame_bgr, conf=conf, verbose=False)[0]
-    seg_entries = _boxes_from_result(sr, im_w, im_h)
-    fire_masks, fire_area_px = _masks_from_result(sr, im_w, im_h)
+    seg_entries: list = []
+    fire_masks: list = []
+    fire_area_px = 0.0
+    if use_segmentation:
+        seg_model = get_yolo_seg()
+        sr = seg_model(frame_bgr, conf=conf, verbose=False)[0]
+        seg_entries = _boxes_from_result(sr, im_w, im_h)
+        fire_masks, fire_area_px = _masks_from_result(sr, im_w, im_h)
 
     fire_boxes = [d for d in det_entries if str(d.get("class_name", "")).lower() == "fire"]
     smoke_boxes = [d for d in det_entries if str(d.get("class_name", "")).lower() == "smoke"]
@@ -860,6 +877,7 @@ def infer_frame_yolo(frame_bgr: np.ndarray, conf: float = 0.25) -> dict:
         "smoke_boxes": smoke_boxes,
         "raw_detections": det_entries,
         "raw_segmentation_detections": seg_entries,
+        "model_mode": model_mode,
     }
 
 
@@ -1608,6 +1626,7 @@ async def analyze_uploaded_video(
     file: UploadFile = File(...),
     sample_interval_sec: float = 0.35,
     conf: float = 0.25,
+    model_mode: str = "hybrid",
     zone_id: int = 1,
     lat: float = None,
     lon: float = None,
@@ -1630,19 +1649,23 @@ async def analyze_uploaded_video(
 
     sample_interval_sec = max(0.15, min(float(sample_interval_sec), 2.0))
     conf = max(0.05, min(float(conf), 0.95))
+    model_mode = normalize_model_mode(model_mode)
 
     if remote_inference_enabled():
         response = await forward_upload_to_remote(
             endpoint="/analyze/video",
             file=file,
-            params={"sample_interval_sec": sample_interval_sec, "conf": conf},
+            params={"sample_interval_sec": sample_interval_sec, "conf": conf, "model_mode": model_mode},
         )
         return response.json()
 
-    try:
-        ensure_segmentation_weights()
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    if model_mode == "hybrid":
+        try:
+            ensure_segmentation_weights()
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    elif get_yolo_det() is None:
+        raise HTTPException(status_code=503, detail="Detection-only mode requires FIRE_DETECT_MODEL or best.pt.")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
@@ -1683,7 +1706,7 @@ async def analyze_uploaded_video(
             t = idx / fps if fps > 0 else 0.0
             try:
                 infer_start = time.perf_counter()
-                y = infer_frame_yolo(frame, conf=conf)
+                y = infer_frame_yolo(frame, conf=conf, model_mode=model_mode)
                 inference_ms = (time.perf_counter() - infer_start) * 1000
                 inference_times_ms.append(inference_ms)
             except Exception as e:
@@ -1702,10 +1725,13 @@ async def analyze_uploaded_video(
             max_confidence = max(detection_confidences) if detection_confidences else 0.0
             explainability = []
             if y["fire"]:
-                explainability.append("Segmentation mask or fire-class detection activated")
+                if model_mode == "hybrid" and y.get("fire_masks"):
+                    explainability.append("Fire segmentation mask crossed the confidence threshold")
+                else:
+                    explainability.append("Fire-class detector found a candidate region")
             if y.get("smoke"):
                 explainability.append("Smoke-class detector found a candidate region")
-            if y.get("fire_segment_area_pixels", 0.0) > 0:
+            if model_mode == "hybrid" and y.get("fire_segment_area_pixels", 0.0) > 0:
                 explainability.append("Fire area estimated from mask pixels")
             if not explainability:
                 explainability.append("No fire/smoke evidence crossed the confidence threshold")
@@ -1809,9 +1835,11 @@ async def analyze_uploaded_video(
         mean_area = sum(fire_areas) / len(fire_areas) if fire_areas else 0.0
         confidence_values = [float(f.get("confidence", 0.0)) for f in frames_out if f.get("confidence", 0.0) > 0]
         mean_confidence = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
-        note_parts = [
-            "YOLO segmentation from fire_seg_final_results.zip (extracted to models/fire_seg/weights/best.pt).",
-        ]
+        note_parts = []
+        if model_mode == "hybrid":
+            note_parts.append("Hybrid mode: detection boxes plus fire segmentation masks.")
+        else:
+            note_parts.append("Detection-only mode: segmentation masks and fire-area estimates disabled.")
         if det_loaded:
             note_parts.append(f"Detection head also loads: {det_path_str}.")
         else:
@@ -1830,9 +1858,11 @@ async def analyze_uploaded_video(
             "fire_frames": positive_frames,
             "conf": conf,
             "model_card": {
-                "architecture": "YOLO detector + YOLO segmentation",
+                "mode": model_mode,
+                "architecture": "YOLO detector + YOLO segmentation" if model_mode == "hybrid" else "YOLO detector only",
                 "detector_loaded": det_loaded,
-                "segmentation_loaded": True,
+                "segmentation_loaded": model_mode == "hybrid",
+                "smoke_segmentation_supported": False,
                 "confidence_threshold": conf,
                 "sample_interval_sec": sample_interval_sec,
                 "avg_inference_ms": round(avg_inference_ms, 2),
@@ -1859,6 +1889,7 @@ async def analyze_uploaded_video(
 async def analyze_uploaded_image(
     file: UploadFile = File(...),
     conf: float = 0.25,
+    model_mode: str = "hybrid",
 ):
     """Run YOLO on a single image; returns JSON + URL to an annotated PNG in /images/."""
     if not file.filename:
@@ -1872,19 +1903,23 @@ async def analyze_uploaded_image(
         )
 
     conf = max(0.05, min(float(conf), 0.95))
+    model_mode = normalize_model_mode(model_mode)
 
     if remote_inference_enabled():
         response = await forward_upload_to_remote(
             endpoint="/analyze/image",
             file=file,
-            params={"conf": conf},
+            params={"conf": conf, "model_mode": model_mode},
         )
         return response.json()
 
-    try:
-        ensure_segmentation_weights()
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    if model_mode == "hybrid":
+        try:
+            ensure_segmentation_weights()
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    elif get_yolo_det() is None:
+        raise HTTPException(status_code=503, detail="Detection-only mode requires FIRE_DETECT_MODEL or best.pt.")
 
     raw = await file.read()
     arr = np.frombuffer(raw, dtype=np.uint8)
@@ -1894,7 +1929,7 @@ async def analyze_uploaded_image(
 
     im_h, im_w = frame.shape[:2]
     try:
-        y = infer_frame_yolo(frame, conf=conf)
+        y = infer_frame_yolo(frame, conf=conf, model_mode=model_mode)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
 
@@ -1909,6 +1944,7 @@ async def analyze_uploaded_image(
         "image_width": im_w,
         "image_height": im_h,
         "conf": conf,
+        "model_mode": model_mode,
         "fire": y["fire"],
         "smoke": y["smoke"],
         "bbox": (
@@ -1934,6 +1970,7 @@ async def export_annotated_video(
     file: UploadFile = File(...),
     conf: float = 0.25,
     infer_stride: int = 1,
+    model_mode: str = "hybrid",
 ):
     """
     Render every frame (or every infer_stride-th frame for speed) with the same overlays as the UI.
@@ -1951,12 +1988,13 @@ async def export_annotated_video(
 
     conf = max(0.05, min(float(conf), 0.95))
     infer_stride = max(1, min(int(infer_stride), 30))
+    model_mode = normalize_model_mode(model_mode)
 
     if remote_inference_enabled():
         response = await forward_upload_to_remote(
             endpoint="/analyze/video/export",
             file=file,
-            params={"conf": conf, "infer_stride": infer_stride},
+            params={"conf": conf, "infer_stride": infer_stride, "model_mode": model_mode},
         )
         safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in Path(file.filename).stem)[:80]
         return StreamingResponse(
@@ -1965,10 +2003,13 @@ async def export_annotated_video(
             headers={"Content-Disposition": f'attachment; filename="FireWatch_annotated_{safe}.mp4"'},
         )
 
-    try:
-        ensure_segmentation_weights()
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    if model_mode == "hybrid":
+        try:
+            ensure_segmentation_weights()
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    elif get_yolo_det() is None:
+        raise HTTPException(status_code=503, detail="Detection-only mode requires FIRE_DETECT_MODEL or best.pt.")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         shutil.copyfileobj(file.file, tmp)
@@ -2020,7 +2061,7 @@ async def export_annotated_video(
                 break
             if frame_idx % infer_stride == 0:
                 try:
-                    last_y = infer_frame_yolo(frame, conf=conf)
+                    last_y = infer_frame_yolo(frame, conf=conf, model_mode=model_mode)
                 except Exception as e:
                     cap.release()
                     writer.release()

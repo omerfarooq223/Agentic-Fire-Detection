@@ -664,12 +664,52 @@ body {
 .compact-controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
   background: rgba(15, 23, 42, 0.8);
   border-top: 1px solid var(--border-light);
   backdrop-filter: blur(8px);
+}
+
+.model-mode-control {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  padding: 0.25rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.model-mode-control button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.model-mode-control button.active {
+  background: rgba(0, 217, 255, 0.14);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px rgba(0, 217, 255, 0.35);
+}
+
+.model-mode-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .button-stack {
@@ -682,17 +722,17 @@ body {
 
 .button-stack .btn:first-child {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 2;
 }
 
 .button-stack .btn:last-child {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
 }
 
 .upload-tall {
   grid-column: 2;
-  grid-row: 1 / 3;
+  grid-row: 2 / 4;
   min-height: 100%;
   display: flex;
   align-items: center;
